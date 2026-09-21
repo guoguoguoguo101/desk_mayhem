@@ -1,0 +1,9 @@
+.godot/
+*.import
+_camera_capture.png
+_mechanics_test.gd
+_mechanics_test.gd.uid
+_network_test.gd
+_network_test.gd.uid
+_run_network_test.py
+_socket_probe.py
