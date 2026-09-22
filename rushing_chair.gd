@@ -31,12 +31,15 @@ func build_visual() -> void:
 	add_box(Vector3(0, 0.32, 0), Vector3(0.7, 0.12, 0.7), Color("3f6d78"))
 	add_box(Vector3(0, 0.72, 0.28), Vector3(0.7, 0.7, 0.1), Color("3f6d78"))
 	add_box(Vector3(0, 0.16, 0), Vector3(0.1, 0.32, 0.1), Color("2a3338"))
+	for x in [-0.38, 0.38]:
+		add_box(Vector3(x, 0.51, 0), Vector3(0.1, 0.09, 0.46), Color("263c50"))
+		for z in [-0.27, 0.27]:
+			preload("res://art_direction.gd").ball(self, Vector3(x * 0.8, 0.07, z), Vector3(0.14, 0.14, 0.14), Color("263c50"))
+	add_box(Vector3(0, 0.1, 0), Vector3(0.65, 0.055, 0.55), Color("263c50"))
 
 func add_box(at: Vector3, size: Vector3, color: Color) -> void:
 	var mesh_instance := MeshInstance3D.new()
-	var mesh := BoxMesh.new()
-	mesh.size = size
-	mesh_instance.mesh = mesh
+	mesh_instance.mesh = preload("res://art_direction.gd").rounded_box(size)
 	mesh_instance.position = at
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color

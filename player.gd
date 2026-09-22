@@ -1,6 +1,8 @@
 extends CharacterBody3D
 
 const THROWN_ITEM = preload("res://thrown_item.gd")
+const RETURNING_POT = preload("res://returning_pot.gd")
+var active_pot: Node3D
 const RUSHING_CHAIR = preload("res://rushing_chair.gd")
 const FloatRules = preload("res://float_rules.gd")
 
@@ -94,15 +96,12 @@ var punch_chain := 0.0
 var stagger_time := 0.0
 var juggled := false
 var victim_float := 0.0
-var float_stall := 0.0
 var float_apex := false
-var float_held := false
 var bounce_pending := false
 var juggle_hits := 0
-var float_load := 0.0
 var float_session := false
+var air_punch_hold_used := false
 var kick_bounce := false
-var float_bar: Node3D
 var airborne := false
 var body_exceptions: Array = []
 var crouching := false
@@ -186,7 +185,6 @@ func _ready() -> void:
 	body_rest = body_mesh.position
 	strip_runtime_props()
 	paint_character()
-	float_bar = FloatRules.make_bar(self, 1.55)
 	pot_visual = make_pot_prop()
 	cup_visual = make_cup_prop()
 	cup_visual.position = Vector3(0.18, 0.42, -0.62)
@@ -244,6 +242,7 @@ func paint_character() -> void:
 	paint_mesh(tail_mesh, Color("e8c08a"))
 	paint_mesh(visual.get_node("Collar"), Color("c43737"), 0.4)
 	paint_mesh(visual.get_node("Badge"), Color("f0c84a"), 0.35)
+	preload("res://art_direction.gd").dress_player(visual)
 
 func add_cylinder(parent: Node3D, radius: float, height: float, color: Color, at: Vector3) -> void:
 	var mesh_instance := MeshInstance3D.new()
@@ -264,10 +263,10 @@ func make_pot_prop() -> Node3D:
 	add_cylinder(prop, 0.32, 0.035, Color("d7dde2"), Vector3(0, 0.09, 0))
 	var handle := MeshInstance3D.new()
 	var box := BoxMesh.new()
-	box.size = Vector3(0.06, 0.16, 0.08)
-	handle.mesh = box
-	handle.position = Vector3(0.3, 0.02, 0)
-	paint_mesh(handle, Color("3e464c"), 0.4)
+	box.size = Vector3(0.48, 0.09, 0.12)
+	handle.mesh = preload("res://art_direction.gd").rounded_box(box.size)
+	handle.position = Vector3(0.48, 0.02, 0)
+	paint_mesh(handle, Color("a86b45"), 0.4)
 	prop.add_child(handle)
 	prop.position = Vector3(0.28, 0.25, -0.7)
 	return prop
@@ -279,9 +278,11 @@ func make_cup_prop() -> Node3D:
 	add_cylinder(prop, 0.1, 0.2, Color("f6efe2"), Vector3.ZERO)
 	add_cylinder(prop, 0.055, 0.12, Color("6b3a28"), Vector3(0, 0.02, 0))
 	var handle := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = Vector3(0.045, 0.1, 0.045)
-	handle.mesh = box
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.047
+	ring.outer_radius = 0.066
+	handle.mesh = ring
+	handle.rotation.x = PI / 2
 	handle.position = Vector3(0.12, 0, 0)
 	paint_mesh(handle, Color("f6efe2"), 0.4)
 	prop.add_child(handle)
@@ -300,9 +301,6 @@ func _process(delta: float) -> void:
 	punch_chain = maxf(0.0, punch_chain - delta)
 	stagger_time = maxf(0.0, stagger_time - delta)
 	victim_float = maxf(0.0, victim_float - delta)
-	if not net_puppet or net_simulated:
-		FloatRules.tick(self, delta)
-	FloatRules.show_bar(float_bar, self)
 	if combo_timer <= 0.0:
 		combo_count = 0
 	if punch_chain <= 0.0 and action_lock <= 0.0:
@@ -613,6 +611,7 @@ func punch() -> void:
 	elif step >= 2:
 		method = "punch_launch"
 	var hits := strike_targets(forward, 1.95, 0.15, 3.2, method)
+	feedback.attack_arc(global_position + Vector3.UP * 0.35, forward, 1.05, Color("ffe1a4"), step >= 2)
 	if hits > 0 and step < 2:
 		punch_chain = PUNCH_LINK
 		punch_index = step
@@ -635,6 +634,7 @@ func air_punch() -> void:
 	if not is_inside_tree() or downed:
 		return
 	strike_targets(forward, 1.95, 0.15, 3.2, "punch_from")
+	feedback.attack_arc(global_position + Vector3.UP * 0.5, forward, 1.1, Color("ffe1a4"))
 
 func kick() -> void:
 	if not can_chain() or float(cd["kick"]) > 0.0:
@@ -649,6 +649,7 @@ func kick() -> void:
 	if not is_inside_tree() or downed:
 		return
 	strike_targets(forward, 2.5, 0.12, 3.4, "kick_from")
+	feedback.attack_arc(global_position, forward, 1.4, Color("f5be86"))
 
 func umbrella_action() -> void:
 	if downed or knockdown or mounted:
@@ -693,6 +694,7 @@ func umbrella_uppercut() -> void:
 	if not is_inside_tree() or downed:
 		return
 	strike_targets(forward, 2.4, 0.2, 3.2, "launch_up")
+	feedback.attack_arc(global_position + Vector3.UP * 0.4, forward, 1.7, Color("85e2dd"), true)
 
 func start_block() -> void:
 	if not can_act() or float(cd["block"]) > 0.0:
@@ -756,15 +758,35 @@ func drink_coffee() -> void:
 	feedback.play_swing()
 
 func throw_pot() -> void:
+	if is_instance_valid(active_pot):
+		if not downed and not knockdown:
+			active_pot.recall(true)
+			var net := get_tree().get_first_node_in_group("network")
+			if in_net_match() and multiplayer.is_server():
+				net.rpc("recall_remote_pot", owner_peer if net_puppet else multiplayer.get_unique_id())
+		return
 	if not can_act() or float(cd["pot"]) > 0.0:
 		return
-	var forward := throw_horizontal_direction()
+	var forward := facing_direction()
 	cd["pot"] = CD_POT
 	action_lock = 0.18
 	pot_span = 0.22
 	pot_time = 0.22
-	spawn_projectile(THROWN_ITEM.ItemKind.POT, forward * 13.5 + Vector3.UP * 3.4, forward)
+	if not in_net_match() or multiplayer.is_server():
+		active_pot = RETURNING_POT.new()
+		get_parent().add_child(active_pot)
+		active_pot.global_position = global_position + Vector3.UP * 0.85 + forward * 0.65
+		active_pot.launch(self, forward)
+		var net := get_tree().get_first_node_in_group("network")
+		if in_net_match():
+			net.rpc("spawn_remote_pot", owner_peer if net_puppet else multiplayer.get_unique_id(), active_pot.global_position, forward)
 	feedback.play_swing()
+
+func pot_outbound(direction: Vector3) -> void:
+	FloatRules.pot_hit(self, direction, false)
+
+func pot_return(direction: Vector3) -> void:
+	FloatRules.pot_hit(self, direction, true)
 
 func pot_slam() -> void:
 	if not can_chain() or float(cd["slam"]) > 0.0:
@@ -991,6 +1013,7 @@ func present_remote() -> void:
 
 func reconcile_owner(state: Dictionary) -> void:
 	health = int(state["hp"])
+	air_punch_hold_used = bool(state.get("fph", air_punch_hold_used))
 	var host_down := bool(state["down"])
 	var host_kd := bool(state.get("kd", false))
 	if host_down != downed:
@@ -1018,8 +1041,8 @@ func capture_net_state() -> Dictionary:
 		"down": downed,
 		"kd": knockdown,
 		"jug": juggled,
-		"fl": float_load,
 		"fs": float_session,
+		"fph": air_punch_hold_used,
 		"kb": kick_bounce,
 		"cr": crouching,
 		"mount": mounted,
@@ -1052,8 +1075,8 @@ func apply_net_state(state: Dictionary) -> void:
 	elif net_hold_correction:
 		return
 	juggled = bool(state["jug"])
-	float_load = float(state.get("fl", 0.0))
 	float_session = bool(state.get("fs", false))
+	air_punch_hold_used = bool(state.get("fph", false))
 	kick_bounce = bool(state.get("kb", false))
 	bounce_pending = bool(state.get("bf", false))
 	victim_float = float(state.get("vf", victim_float))
@@ -1094,9 +1117,10 @@ func predict_net_hit(method: String, direction: Vector3) -> void:
 			juggled = true
 			kick_bounce = false
 			bounce_pending = false
+			FloatRules.start_launch(self)
 			FloatRules.begin_float(self)
 			victim_float = 0.95
-			velocity = flat * 1.4 + Vector3.UP * 6.6
+			velocity = flat * 1.4 + Vector3.UP * FloatRules.UMBRELLA_LAUNCH_SPEED
 		"punch_launch":
 			if juggled or kick_bounce:
 				predict_net_hit("punch_from", direction)
@@ -1104,9 +1128,10 @@ func predict_net_hit(method: String, direction: Vector3) -> void:
 			juggled = true
 			kick_bounce = false
 			bounce_pending = false
+			FloatRules.start_launch(self)
 			FloatRules.begin_float(self)
 			victim_float = 0.9
-			velocity = flat * 2.0 + Vector3.UP * 6.5
+			velocity = flat * 2.0 + Vector3.UP * FloatRules.PUNCH_LAUNCH_SPEED
 		"kick_from":
 			if juggled or kick_bounce:
 				juggled = false
@@ -1119,7 +1144,7 @@ func predict_net_hit(method: String, direction: Vector3) -> void:
 		"punch_from", "punch_follow":
 			if juggled or kick_bounce:
 				juggled = true
-				velocity.y = maxf(velocity.y, 2.6)
+				FloatRules.extend(self, FloatRules.PUNCH_HOLD)
 				victim_float = maxf(victim_float, 0.35)
 			else:
 				velocity.x = flat.x * 3.0
@@ -1133,9 +1158,13 @@ func predict_net_hit(method: String, direction: Vector3) -> void:
 				velocity = flat * 1.4 + Vector3.DOWN * 16.0
 			else:
 				velocity = Vector3.ZERO
-		"pot_float", "umbrella_spin_from":
+		"pot_float":
 			if juggled and not bounce_pending and not kick_bounce:
-				velocity.y = maxf(velocity.y, 2.4)
+				FloatRules.extend(self, FloatRules.POT_LIFT)
+				victim_float = maxf(victim_float, 0.35)
+		"umbrella_spin_from":
+			if juggled and not bounce_pending and not kick_bounce:
+				FloatRules.extend(self, FloatRules.SPIN_LIFT)
 				victim_float = maxf(victim_float, 0.35)
 		"shove_from":
 			if not juggled:
@@ -1174,6 +1203,9 @@ func step_puppet_air(delta: float) -> void:
 		global_position += error * minf(1.0, 5.0 * delta)
 
 func reset_for_round() -> void:
+	if is_instance_valid(active_pot):
+		active_pot.queue_free()
+	active_pot = null
 	health = max_health
 	downed = false
 	knockdown = false
@@ -1189,12 +1221,10 @@ func reset_for_round() -> void:
 	juggled = false
 	bounce_pending = false
 	victim_float = 0.0
-	float_stall = 0.0
 	float_apex = false
-	float_held = false
 	juggle_hits = 0
-	float_load = 0.0
 	float_session = false
+	air_punch_hold_used = false
 	kick_bounce = false
 	crouching = false
 	head_lock = 0.0
@@ -1338,6 +1368,7 @@ func take_hit(attack_name: String = "文件夹") -> void:
 	drop_from_head()
 	drop_rider()
 	var damage: int = {
+		"回旋锅": 12, "回旋锅·回收": 10,
 		"文件夹": 12, "锅": 18, "咖啡": 12, "轻拳": 8, "连拳": 8, "补拳": 10,
 		"上勾拳": 16, "前踢": 12, "踢飞": 22, "雨伞": 12, "雨伞挑飞": 20,
 		"扣锅": 28, "空中扣锅": 26, "办公椅": 8, "椅推": 4, "旋伞": 8,
@@ -1386,7 +1417,9 @@ func punch_from(direction: Vector3) -> void:
 		take_hit("补拳")
 		if downed or bounce_pending:
 			return
-		FloatRules.extend(self, 3.4)
+		velocity.x = direction.x * 2.0
+		velocity.z = direction.z * 2.0
+		FloatRules.extend(self, FloatRules.PUNCH_HOLD)
 		return
 	if kick_bounce:
 		take_hit("补拳")
@@ -1426,7 +1459,7 @@ func punch_launch(direction: Vector3) -> void:
 	victim_float = 0.9
 	bounce_pending = false
 	juggle_hits = 1
-	velocity = direction * 2.0 + Vector3.UP * 6.5
+	velocity = direction * 2.0 + Vector3.UP * FloatRules.PUNCH_LAUNCH_SPEED
 
 func kick_from(direction: Vector3) -> void:
 	if hit_locked():
@@ -1461,7 +1494,7 @@ func launch_up(direction: Vector3) -> void:
 	bounce_pending = false
 	juggle_hits = 1
 	stagger_time = 0.0
-	velocity = direction * 1.4 + Vector3.UP * 6.6
+	velocity = direction * 1.4 + Vector3.UP * FloatRules.UMBRELLA_LAUNCH_SPEED
 
 func slam_from_pot(direction: Vector3) -> void:
 	if hit_locked():
@@ -1509,7 +1542,7 @@ func umbrella_spin_from(direction: Vector3) -> void:
 		take_hit("旋伞")
 		if downed or bounce_pending or kick_bounce or not juggled:
 			return
-		FloatRules.extend(self, 2.6)
+		FloatRules.extend(self, FloatRules.SPIN_LIFT)
 		return
 	take_hit("旋伞")
 	if downed:
@@ -1537,7 +1570,7 @@ func pot_float(_direction: Vector3 = Vector3.ZERO) -> void:
 	take_hit("锅")
 	if downed or bounce_pending or kick_bounce or not juggled:
 		return
-	FloatRules.extend(self, 3.6)
+	FloatRules.extend(self, FloatRules.POT_LIFT)
 
 func begin_chair_ride(_direction: Vector3) -> void:
 	if hit_locked() or chair_ride:
@@ -1573,17 +1606,14 @@ func end_chair_ride(throw_velocity: Vector3) -> void:
 		velocity = Vector3.ZERO
 		airborne = false
 		return
-	FloatRules.add_hit(self)
 	FloatRules.begin_float(self)
-	var mul := FloatRules.lift_mul(self)
 	stagger_time = 0.0
 	juggled = true
 	kick_bounce = false
 	bounce_pending = false
 	airborne = true
-	victim_float = 0.5 * maxf(mul, 0.16)
+	victim_float = 0.5
 	var pop := throw_velocity
-	pop.y *= maxf(mul, 0.16)
 	velocity = pop
 
 func facing_direction() -> Vector3:
@@ -1908,7 +1938,7 @@ func _physics_process(delta: float) -> void:
 			juggled = true
 			airborne = true
 			FloatRules.begin_float(self)
-			victim_float = 0.48 * maxf(FloatRules.lift_mul(self), 0.16)
+			victim_float = 0.48
 		elif FloatRules.on_arena_floor(self) and victim_float <= 0.0:
 			begin_knockdown()
 		return
@@ -1918,12 +1948,10 @@ func _physics_process(delta: float) -> void:
 		if FloatRules.on_arena_floor(self):
 			if bounce_pending:
 				bounce_pending = false
-				FloatRules.add_hit(self)
 				FloatRules.begin_float(self)
-				var mul := FloatRules.lift_mul(self)
-				victim_float = 0.4 * maxf(mul, 0.18)
-				velocity.y = 5.0 * maxf(mul, 0.18)
-			elif float_apex and float_stall <= 0.0 and velocity.y <= 0.2:
+				victim_float = 0.4
+				velocity.y = 5.0
+			elif float_apex and velocity.y <= 0.2:
 				begin_knockdown()
 		return
 	if stagger_time > 0.0 and dash_time <= 0.0:
@@ -2082,7 +2110,7 @@ func weapon_skill_pair(chosen: int, key_one: String, key_two: String) -> Array:
 				slam_name = "空中扣锅"
 				slam_hot = true
 			return [
-				pack_slot(key_one, "甩锅", float(cd["pot"]), CD_POT),
+				pack_slot(key_one, "快速召回" if is_instance_valid(active_pot) else "回旋锅", 0.0 if is_instance_valid(active_pot) else float(cd["pot"]), CD_POT, is_instance_valid(active_pot)),
 				pack_slot(key_two, slam_name, float(cd["slam"]), CD_SLAM, slam_hot),
 			]
 		_:

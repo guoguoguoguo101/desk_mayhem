@@ -1,84 +1,75 @@
 extends RefCounted
 
-const MAX_LOAD := 5.0
 const KNOCKDOWN_TIME := 0.8
-const RISE_GRAVITY := 9.6
-const FALL_GRAVITY := 13.0
-const STALL_TIME := 0.52
-const STALL_HEIGHT := 2.35
-const HIT_HANG := 0.25
-const HIT_LIFT := 1.8
+const AIR_GRAVITY := 16.5
+const PUNCH_LAUNCH_SPEED := 9.2
+const UMBRELLA_LAUNCH_SPEED := 9.3
+const PUNCH_HOLD := 0
+const SPIN_LIFT := 1
+const SPIN_LIFT_SPEED := 7.0
+const POT_LIFT := 2
 
 static func start_launch(body) -> void:
 	if not body.float_session:
-		body.float_load = 0.0
 		body.float_session = true
+		body.air_punch_hold_used = false
 
-static func add_hit(body) -> void:
-	body.float_session = true
-	body.float_load = minf(MAX_LOAD, float(body.float_load) + 0.8)
-
-static func tick(body, delta: float) -> void:
-	if not body.float_session or body.downed or body.get("knockdown"):
+static func pot_hit(body, direction: Vector3, returning: bool) -> void:
+	if body.hit_locked():
 		return
-	body.float_load = minf(MAX_LOAD, float(body.float_load) + delta * 0.65)
-
-static func lift_mul(body) -> float:
-	return clampf(1.0 - float(body.float_load) / MAX_LOAD, 0.0, 1.0)
-
-static func hang_gravity(body) -> float:
-	return 6.2 + float(body.float_load) * 2.4
-
-static func can_lift(body) -> bool:
-	return lift_mul(body) > 0.08
+	# Keep ranged blocking consistent with the existing pot attack.
+	if body.get("block_time") != null and body.block_time > 0.0:
+		body.take_hit("锅")
+		return
+	body.take_hit("回旋锅·回收" if returning else "回旋锅")
+	if body.downed:
+		return
+	if body.get("seated") == true:
+		if body.has_method("release_seat"):
+			body.release_seat(Vector3.ZERO)
+		elif body.has_method("drop_from_chair"):
+			body.drop_from_chair(Vector3.ZERO)
+	body.velocity.x = direction.x if returning else direction.x * 3.8
+	body.velocity.z = direction.z if returning else direction.z * 3.8
+	if body.juggled and not body.bounce_pending and not body.kick_bounce:
+		if returning:
+			body.velocity.y = maxf(body.velocity.y, -1.0)
+		else:
+			extend(body, POT_LIFT)
+	elif not body.kick_bounce and not body.bounce_pending:
+		if body.get("stun_time") != null:
+			body.stun_time = maxf(body.stun_time, 0.25)
+		else:
+			body.stagger_time = maxf(body.stagger_time, 0.25)
 
 static func end_session(body) -> void:
 	body.float_session = false
-	body.float_load = 0.0
 	body.juggled = false
 	body.kick_bounce = false
-	if body.get("float_stall") != null:
-		body.float_stall = 0.0
-		body.float_apex = false
-		body.float_held = false
+	body.air_punch_hold_used = false
+	body.float_apex = false
 
 static func begin_float(body) -> void:
 	body.float_apex = false
-	body.float_held = false
-	body.float_stall = 0.0
 
 static func step_float(body, delta: float) -> void:
 	if body.bounce_pending:
 		body.velocity.y -= 20.0 * delta
 		return
-	if not body.float_apex:
-		var bottom := capsule_bottom_y(body)
-		if body.velocity.y > 0.15 and bottom < STALL_HEIGHT:
-			body.velocity.y -= RISE_GRAVITY * delta
-			return
-		var hang := STALL_TIME if bottom >= 1.55 else 0.22
+	body.velocity.y -= AIR_GRAVITY * delta
+	if body.velocity.y <= 0.0:
 		body.float_apex = true
-		body.velocity.y = 0.0
-		if not body.float_held:
-			body.float_held = true
-			body.float_stall = maxf(float(body.float_stall), hang)
-	if body.float_stall > 0.0:
-		body.float_stall = maxf(0.0, float(body.float_stall) - delta)
-		body.velocity.y = 0.0
-		return
-	body.velocity.y -= FALL_GRAVITY * delta
 
-static func extend(body, _base_lift: float) -> void:
-	add_hit(body)
-	var mul := lift_mul(body)
-	if mul <= 0.08:
+static func extend(body, kind: int) -> void:
+	if kind == PUNCH_HOLD:
+		if body.air_punch_hold_used:
+			return
+		body.air_punch_hold_used = true
+		body.velocity.y = maxf(body.velocity.y, -0.35)
 		return
-	var vel: Vector3 = body.velocity
-	vel.y = maxf(vel.y, HIT_LIFT * mul)
-	body.velocity = vel
-	body.float_stall = float(body.float_stall) + HIT_HANG
-	if vel.y > 0.2:
-		body.float_apex = false
+	var lift := SPIN_LIFT_SPEED if kind == SPIN_LIFT else 3.0
+	body.velocity.y = maxf(body.velocity.y, lift)
+	body.float_apex = false
 
 static func try_kick_wall(body: CharacterBody3D) -> bool:
 	if not body.kick_bounce:
@@ -95,13 +86,11 @@ static func try_kick_wall(body: CharacterBody3D) -> bool:
 		var flat := Vector3(bounced.x, 0.0, bounced.z)
 		if flat.length() > 8.5:
 			flat = flat.normalized() * 8.5
-		var mul := lift_mul(body)
 		bounced.x = flat.x
 		bounced.z = flat.z
-		bounced.y = maxf(bounced.y, 4.4 * maxf(mul, 0.18))
+		bounced.y = maxf(bounced.y, 4.4)
 		body.velocity = bounced
 		body.kick_bounce = false
-		add_hit(body)
 		return true
 	return false
 
@@ -181,46 +170,3 @@ static func release_body_exceptions(body: CharacterBody3D) -> void:
 			continue
 		body.remove_collision_exception_with(node)
 	body.body_exceptions = kept
-
-static func make_bar(parent: Node3D, height: float) -> Node3D:
-	var root := Node3D.new()
-	root.name = "FloatBar"
-	root.position = Vector3(0, height, 0)
-	parent.add_child(root)
-	var back := MeshInstance3D.new()
-	var back_mesh := BoxMesh.new()
-	back_mesh.size = Vector3(0.72, 0.07, 0.02)
-	back.mesh = back_mesh
-	var back_mat := StandardMaterial3D.new()
-	back_mat.albedo_color = Color(0.08, 0.08, 0.1, 0.85)
-	back_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	back_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	back.material_override = back_mat
-	root.add_child(back)
-	var fill := MeshInstance3D.new()
-	fill.name = "Fill"
-	var fill_mesh := BoxMesh.new()
-	fill_mesh.size = Vector3(0.68, 0.045, 0.025)
-	fill.mesh = fill_mesh
-	var fill_mat := StandardMaterial3D.new()
-	fill_mat.albedo_color = Color("ffb03a")
-	fill_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	fill.material_override = fill_mat
-	fill.position = Vector3(-0.34, 0, 0.01)
-	root.add_child(fill)
-	root.visible = false
-	return root
-
-static func show_bar(bar: Node3D, body) -> void:
-	if bar == null:
-		return
-	var active: bool = body.float_session and float(body.float_load) > 0.04 and not body.downed and not body.get("knockdown")
-	bar.visible = active
-	if not active:
-		return
-	var mul := clampf(float(body.float_load) / MAX_LOAD, 0.04, 1.0)
-	var fill := bar.get_node("Fill") as MeshInstance3D
-	fill.scale = Vector3(mul, 1.0, 1.0)
-	fill.position.x = -0.34 + 0.34 * mul
-	var mat := fill.material_override as StandardMaterial3D
-	mat.albedo_color = Color("ff5a3a") if mul > 0.82 else Color("ffb03a")

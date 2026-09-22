@@ -15,18 +15,33 @@ var shown_combo := 0
 var combo_pop := 0.0
 
 func _ready() -> void:
-	instructions.text = "WASD 移动，鼠标转镜头，Shift 闪现，空格跳。Tab 选武器槽，1-4 装备，Q/E 与 F/C 是两把武器\n左键打中才能连：挥拳、连拳、上勾。对手浮空后左键变为补拳。上勾或雨伞挑飞后，扣锅会变快，右键踢中会踹得更远"
-	instructions.offset_right = 1100.0
-	instructions.offset_bottom = 78.0
-	instructions.add_theme_font_size_override("font_size", 16)
-	outline(instructions)
+	var identity := Panel.new()
+	identity.position = Vector2(16, 12)
+	identity.size = Vector2(320, 106)
+	identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var identity_style := StyleBoxFlat.new()
+	identity_style.bg_color = Color(0.075, 0.14, 0.19, 0.93)
+	identity_style.set_corner_radius_all(14)
+	identity_style.border_color = Color("496471")
+	identity_style.set_border_width_all(1)
+	identity.add_theme_stylebox_override("panel", identity_style)
+	add_child(identity)
+	instructions.text = "WASD 移动   ·   Shift 闪现   ·   空格 跳跃   ·   Tab 换槽 / 1–4 装备"
+	instructions.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	instructions.offset_left = 330
+	instructions.offset_right = -120
+	instructions.offset_top = -144
+	instructions.offset_bottom = -118
+	instructions.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	instructions.add_theme_font_size_override("font_size", 13)
+	instructions.modulate = Color("d3e4e8")
 	instructions.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	build_health_bar()
 	build_crosshair()
 	status_label = Label.new()
-	status_label.position = Vector2(24, 150)
+	status_label.position = Vector2(28, 153)
 	status_label.size = Vector2(980, 32)
-	status_label.add_theme_font_size_override("font_size", 20)
+	status_label.add_theme_font_size_override("font_size", 16)
 	outline(status_label)
 	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(status_label)
@@ -44,47 +59,53 @@ func _ready() -> void:
 	outline(combo_label)
 	combo_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(combo_label)
-	var backdrop := ColorRect.new()
-	backdrop.color = Color(0.04, 0.05, 0.07, 0.78)
-	backdrop.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	backdrop.offset_top = -128.0
-	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(backdrop)
+	var brand := Label.new()
+	brand.position = Vector2(28, 20)
+	brand.text = "工位失控  /  DESK MAYHEM"
+	brand.add_theme_font_size_override("font_size", 23)
+	brand.modulate = Color("e8f0e8")
+	outline(brand)
+	add_child(brand)
 	var bar := HBoxContainer.new()
 	bar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	bar.offset_top = -112.0
-	bar.offset_bottom = -16.0
-	bar.offset_left = 16.0
-	bar.offset_right = -16.0
+	bar.offset_top = -116
+	bar.offset_bottom = -18
+	bar.offset_left = 320
+	bar.offset_right = -100
 	bar.alignment = BoxContainer.ALIGNMENT_CENTER
 	bar.add_theme_constant_override("separation", 8)
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bar)
+	var equipment := HBoxContainer.new()
+	equipment.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	equipment.offset_left = 24
+	equipment.offset_top = -91
+	equipment.offset_bottom = -18
+	equipment.add_theme_constant_override("separation", 5)
+	add_child(equipment)
 	for _i in 4:
-		var slot := make_slot(bar, Vector2(100, 78))
-		equip_ui.append(slot)
-	bar.add_child(gap())
+		equip_ui.append(make_slot(equipment, Vector2(62, 72)))
 	for _i in 6:
-		var slot := make_slot(bar, Vector2(104, 78))
+		var slot := make_slot(bar, Vector2(88, 98))
 		skill_ui.append(slot)
 
 func build_health_bar() -> void:
 	var back := ColorRect.new()
-	back.position = Vector2(24, 118)
-	back.size = Vector2(280, 22)
+	back.position = Vector2(28, 70)
+	back.size = Vector2(240, 9)
 	back.color = Color(0.08, 0.06, 0.06, 0.92)
 	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(back)
 	hp_fill = ColorRect.new()
-	hp_fill.position = Vector2(24, 118)
-	hp_fill.size = Vector2(280, 22)
-	hp_fill.color = Color(0.35, 0.75, 0.38, 1)
+	hp_fill.position = Vector2(28, 70)
+	hp_fill.size = Vector2(240, 9)
+	hp_fill.color = Color("6edbc0")
 	hp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(hp_fill)
 	hp_label = Label.new()
-	hp_label.position = Vector2(24, 116)
-	hp_label.size = Vector2(280, 26)
-	hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hp_label.position = Vector2(28, 92)
+	hp_label.size = Vector2(240, 22)
+	hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	hp_label.add_theme_font_size_override("font_size", 16)
 	outline(hp_label)
 	hp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -109,7 +130,7 @@ func build_crosshair() -> void:
 		crosshair_parts.append(hair)
 
 func outline(label: Label) -> void:
-	label.add_theme_constant_override("outline_size", 4)
+	label.add_theme_constant_override("outline_size", 2)
 	label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 
 func gap() -> Control:
@@ -126,8 +147,8 @@ func make_slot(parent: Node, size: Vector2) -> Dictionary:
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.focus_mode = Control.FOCUS_NONE
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.08, 0.1, 0.94)
-	style.border_color = Color(0.93, 0.86, 0.72, 0.28)
+	style.bg_color = Color("1b2d3e")
+	style.border_color = Color("435966")
 	style.set_border_width_all(2)
 	style.set_corner_radius_all(10)
 	style.content_margin_top = 4
@@ -145,14 +166,21 @@ func make_slot(parent: Node, size: Vector2) -> Dictionary:
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(box)
-	var key_label := make_label(15, Color(0.95, 0.82, 0.45))
-	var name_label := make_label(18, Color.WHITE)
-	var cd_label := make_label(16, Color(1, 0.85, 0.55))
+	var key_label := make_label(12, Color("a6bfc8"))
+	var name_label := make_label(13, Color.WHITE)
+	var cd_label := make_label(12, Color("f3c97d"))
 	box.add_child(key_label)
+	var icon := TextureRect.new()
+	icon.custom_minimum_size = Vector2(28, 28) if size.x < 70 else Vector2(36, 36)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(icon)
 	box.add_child(name_label)
 	box.add_child(cd_label)
 	return {
 		"style": style,
+		"icon": icon,
 		"overlay": overlay,
 		"key": key_label,
 		"name": name_label,
@@ -191,10 +219,10 @@ func _process(_delta: float) -> void:
 	for hair in crosshair_parts:
 		hair.color = Color(1, 0.96, 0.86, 0.92)
 	var ratio := 0.0 if player.max_health <= 0 else clampf(float(player.health) / float(player.max_health), 0.0, 1.0)
-	hp_fill.size.x = 280.0 * ratio
+	hp_fill.size.x = 240.0 * ratio
 	hp_label.text = "HP %d / %d" % [player.health, player.max_health]
 	if ratio > 0.55:
-		hp_fill.color = Color(0.35, 0.75, 0.38)
+		hp_fill.color = Color("6edbc0")
 	elif ratio > 0.28:
 		hp_fill.color = Color(0.86, 0.68, 0.22)
 	else:
@@ -207,6 +235,17 @@ func _process(_delta: float) -> void:
 		apply_slot(skill_ui[i], skills[i])
 
 func apply_slot(ui: Dictionary, data: Dictionary) -> void:
+	var title: String = data["name"]
+	var symbol := "punch"
+	if "伞" in title or "冲锋" in title or "挑飞" in title: symbol = "spin" if "旋" in title else "umbrella"
+	elif "扣锅" in title: symbol = "slam"
+	elif "锅" in title or "召回" in title: symbol = "pot"
+	elif "咖啡" in title or "投掷" in title: symbol = "drink" if "喝" in title else "coffee"
+	elif "椅" in title: symbol = "chair"
+	elif "踢" in title: symbol = "kick"
+	if ui.get("symbol", "") != symbol:
+		ui["icon"].texture = load("res://assets/ui/%s.svg" % symbol)
+		ui["symbol"] = symbol
 	ui["key"].text = data["key"]
 	ui["name"].text = data["name"]
 	var remain: float = data["remain"]
@@ -218,14 +257,14 @@ func apply_slot(ui: Dictionary, data: Dictionary) -> void:
 	ui["name"].modulate = Color(1, 0.86, 0.42) if data["highlight"] else Color.WHITE
 	var style: StyleBoxFlat = ui["style"]
 	if data["selected"] or data["highlight"]:
-		style.bg_color = Color(0.32, 0.22, 0.08, 0.96)
-		style.border_color = Color(1.0, 0.78, 0.28)
+		style.bg_color = Color("355b60")
+		style.border_color = Color("f1bb68")
 		style.set_border_width_all(3)
 	elif data["equipped"]:
-		style.bg_color = Color(0.1, 0.16, 0.2, 0.96)
+		style.bg_color = Color("263f50")
 		style.border_color = Color(0.55, 0.78, 0.9)
 		style.set_border_width_all(2)
 	else:
-		style.bg_color = Color(0.07, 0.08, 0.1, 0.94)
-		style.border_color = Color(0.93, 0.86, 0.72, 0.28)
+		style.bg_color = Color("1b2d3e")
+		style.border_color = Color("435966")
 		style.set_border_width_all(2)

@@ -9,6 +9,33 @@ const SWING_SOUND = preload("res://audio/swing.wav")
 func play_swing() -> void:
 	play_sound(SWING_SOUND, -8.0)
 
+func attack_arc(at: Vector3, forward: Vector3, reach: float, color: Color, vertical := false) -> void:
+	var slash := MeshInstance3D.new()
+	var mesh := ImmediateMesh.new()
+	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
+	for i in 25:
+		var phase := float(i) / 24.0
+		var angle := lerpf(-1.15, 1.15, phase)
+		var width := sin(phase * PI) * 0.22
+		for r in [reach - width, reach + width]:
+			mesh.surface_add_vertex(Vector3(sin(angle) * r, 0, -cos(angle) * r))
+	mesh.surface_end()
+	slash.mesh = mesh
+	var mat := effect_material(color, true)
+	mesh.surface_set_material(0, mat)
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	slash.material_override = mat
+	slash.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(slash)
+	slash.global_position = at
+	slash.rotation.y = atan2(-forward.x, -forward.z)
+	if vertical:
+		slash.rotate_object_local(Vector3.FORWARD, PI / 2)
+	var tween := create_tween().set_parallel(true)
+	tween.tween_property(slash, "scale", Vector3.ONE * 1.18, 0.17)
+	tween.tween_property(mat, "albedo_color:a", 0.0, 0.2)
+	tween.chain().tween_callback(slash.queue_free)
+
 func dash_start() -> void:
 	play_swing()
 
@@ -49,13 +76,13 @@ func impact(at: Vector3, heavy := false, combo := 0, popup := "") -> void:
 	var power := (0.28 if heavy else 0.12) + minf(float(combo), 6.0) * 0.02
 	camera_rig.add_shake(power)
 	play_sound(HEAVY_SOUND if heavy else HIT_SOUND, 2.2 if heavy else -1.2)
-	var color := Color("ffb14a") if heavy else Color("fff1b8")
-	burst_flash(at, 0.46 if heavy else 0.26, Color("fffaf0"))
+	var color := Color("efaa62") if heavy else Color("fff1b8")
+	burst_flash(at, 0.23 if heavy else 0.14, Color("fffaf0"))
 	burst_ring(at, 0.32, 2.5 if heavy else 1.45, Color("fff6dc"))
 	if heavy:
 		burst_ring(at + Vector3.DOWN * 0.55, 0.42, 3.2, Color("ffd27a"))
 	burst_slash(at, heavy)
-	var sparks := 18 if heavy else 11
+	var sparks := 12 if heavy else 7
 	for i in sparks:
 		burst_spark(at, color, heavy)
 	if popup != "":
@@ -178,7 +205,7 @@ func effect_material(color: Color, transparent := false) -> StandardMaterial3D:
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.emission_enabled = true
 	material.emission = color
-	material.emission_energy_multiplier = 2.4
+	material.emission_energy_multiplier = 0.7
 	if transparent:
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	return material

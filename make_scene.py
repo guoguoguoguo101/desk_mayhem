@@ -71,6 +71,7 @@ def part(name, parent, xyz, size, color, kind='BoxMesh', solid=False):
 
 
 node('OfficeDemo', 'Node3D', None)
+node('ArtDirection', 'Node3D', props={'script': 'ExtResource("8")'})
 node('Environment', 'WorldEnvironment', props={'environment': 'SubResource("ENV")'})
 node('Sun', 'DirectionalLight3D', props={
     'rotation_degrees': pos((-48, -35, 0)),
@@ -255,6 +256,9 @@ env = resource('Environment', {
 })
 resources[-1] = resources[-1].replace(f'id="{env}"', 'id="ENV"')
 
-header = '[gd_scene load_steps=' + str(len(resources)+6) + ' format=3]\n\n[ext_resource type="Script" path="res://player.gd" id="1"]\n[ext_resource type="Script" path="res://follow_camera.gd" id="2"]\n[ext_resource type="Script" path="res://dummy.gd" id="3"]\n[ext_resource type="Script" path="res://combat_feedback.gd" id="4"]\n[ext_resource type="Script" path="res://combat_hud.gd" id="5"]'
+header = '[gd_scene load_steps=' + str(len(resources)+9) + ' format=3]\n\n[ext_resource type="Script" path="res://player.gd" id="1"]\n[ext_resource type="Script" path="res://follow_camera.gd" id="2"]\n[ext_resource type="Script" path="res://dummy.gd" id="3"]\n[ext_resource type="Script" path="res://combat_feedback.gd" id="4"]\n[ext_resource type="Script" path="res://combat_hud.gd" id="5"]'
+header += '\n[ext_resource type="Script" path="res://network_manager.gd" id="6"]\n[ext_resource type="Script" path="res://duel_hall.gd" id="7"]\n[ext_resource type="Script" path="res://art_direction.gd" id="8"]'
+node('DuelHall', 'Node3D', props={'script': 'ExtResource("7")'})
+node('Network', 'Node', props={'script': 'ExtResource("6")'}, groups=['network'])
 Path('office_demo.tscn').write_text(header + '\n\n' + '\n\n'.join(resources) + '\n\n' + '\n\n'.join(nodes) + '\n', encoding='utf-8')
 print('Generated office_demo.tscn with', len(nodes), 'nodes')

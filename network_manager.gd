@@ -14,6 +14,8 @@ const SPAWNS: Array[Vector3] = [
 ]
 
 const HIT_METHODS := {
+	"pot_outbound": true,
+	"pot_return": true,
 	"punch_from": true,
 	"punch_follow": true,
 	"punch_launch": true,
@@ -124,7 +126,7 @@ func build_lobby() -> void:
 	add_child(lobby)
 	var dim := ColorRect.new()
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.08, 0.04, 0.03, 0.78)
+	dim.color = Color(0.06, 0.12, 0.17, 0.7)
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	lobby.add_child(dim)
 	var panel := PanelContainer.new()
@@ -146,17 +148,17 @@ func build_lobby() -> void:
 	box.add_theme_constant_override("separation", 12)
 	margin.add_child(box)
 	box.add_child(title_label("工位失控"))
-	var sub := body_label("单人练习在这台电脑打稻草人。比武大厅由你这台当主机，同事用你的 IP 连进来就会直接出现。现在是 1v1，房间以后可以开成 2v2 或四人乱战。")
+	var sub := body_label("下班前，来场办公室乱斗。\n练习你的连招，或者邀请同事加入 1v1 比武。")
 	box.add_child(sub)
 	var solo := Button.new()
 	solo.text = "单人练习"
 	solo.pressed.connect(start_solo)
-	style_button(solo, Color(0.28, 0.16, 0.1))
+	style_button(solo, Color("377e80"))
 	box.add_child(solo)
 	var host := Button.new()
 	host.text = "开设比武大厅"
 	host.pressed.connect(start_hall)
-	style_button(host, Color(0.5, 0.12, 0.09))
+	style_button(host, Color("ab6855"))
 	box.add_child(host)
 	address_input = LineEdit.new()
 	address_input.placeholder_text = "同事主机的 IP，例如 192.168.1.20"
@@ -166,7 +168,7 @@ func build_lobby() -> void:
 	var join := Button.new()
 	join.text = "加入比武大厅"
 	join.pressed.connect(start_join)
-	style_button(join, Color(0.5, 0.12, 0.09))
+	style_button(join, Color("ab6855"))
 	box.add_child(join)
 	lobby_status = body_label("")
 	box.add_child(lobby_status)
@@ -190,8 +192,8 @@ func body_label(text: String) -> Label:
 
 func wood_panel_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.18, 0.09, 0.06, 0.96)
-	style.border_color = Color(0.78, 0.6, 0.28)
+	style.bg_color = Color("1b2d3e")
+	style.border_color = Color("d8b879")
 	style.set_border_width_all(3)
 	style.set_corner_radius_all(8)
 	style.shadow_color = Color(0, 0, 0, 0.45)
@@ -216,8 +218,8 @@ func style_button(button: Button, color: Color) -> void:
 
 func style_line(line: LineEdit) -> void:
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.1, 0.06, 0.04)
-	style.border_color = Color(0.62, 0.46, 0.22)
+	style.bg_color = Color("152533")
+	style.border_color = Color("526d79")
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(4)
 	style.content_margin_left = 10
@@ -231,7 +233,7 @@ func build_match_label() -> void:
 	layer.layer = 5
 	add_child(layer)
 	match_label = Label.new()
-	match_label.position = Vector2(24, 78)
+	match_label.position = Vector2(28, 120)
 	match_label.size = Vector2(1200, 28)
 	match_label.add_theme_font_size_override("font_size", 18)
 	match_label.add_theme_constant_override("outline_size", 4)
@@ -684,6 +686,7 @@ func pack_body(body: Node, peer_id: int) -> Dictionary:
 		"down": bool(body.get("downed")),
 		"kd": bool(body.get("knockdown")),
 		"jug": bool(body.get("juggled")),
+		"fph": bool(body.get("air_punch_hold_used")),
 	}
 
 @rpc("authority", "call_remote", "unreliable_ordered")
@@ -1035,6 +1038,28 @@ func announce_throw(kind: int, origin: Vector3, projectile_velocity: Vector3) ->
 	if not in_match():
 		return
 	rpc("spawn_remote_throw", kind, origin, projectile_velocity)
+
+@rpc("authority", "call_remote", "reliable")
+func spawn_remote_pot(peer_id: int, origin: Vector3, forward: Vector3) -> void:
+	if not in_match():
+		return
+	var body: Node = local_player if peer_id == multiplayer.get_unique_id() else puppet_for(peer_id)
+	if body == null:
+		return
+	if is_instance_valid(body.active_pot):
+		body.active_pot.queue_free()
+	var pot := preload("res://returning_pot.gd").new()
+	pot.cosmetic = true
+	get_parent().add_child(pot)
+	pot.global_position = origin
+	pot.launch(body, forward)
+	body.active_pot = pot
+
+@rpc("authority", "call_remote", "reliable")
+func recall_remote_pot(peer_id: int) -> void:
+	var body: Node = local_player if peer_id == multiplayer.get_unique_id() else puppet_for(peer_id)
+	if body and is_instance_valid(body.active_pot):
+		body.active_pot.recall(true)
 
 @rpc("any_peer", "call_remote", "reliable")
 func spawn_remote_throw(kind: int, origin: Vector3, projectile_velocity: Vector3) -> void:

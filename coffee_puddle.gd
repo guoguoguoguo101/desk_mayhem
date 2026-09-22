@@ -19,6 +19,20 @@ func _ready() -> void:
 	disc.scale = Vector3(0.1, 1.0, 0.1)
 	var tween := create_tween()
 	tween.tween_property(disc, "scale", Vector3.ONE, 0.22)
+	var rim := MeshInstance3D.new()
+	var ring := TorusMesh.new()
+	ring.inner_radius = 1.27
+	ring.outer_radius = 1.33
+	ring.rings = 32
+	ring.ring_segments = 8
+	rim.mesh = ring
+	rim.material_override = preload("res://art_direction.gd").material(Color("c49a66"), 0.25)
+	add_child(rim)
+	rim.position.y = 0.025
+	rim.scale.y = 0.18
+	for i in 5:
+		var angle := float(i) * TAU / 5
+		preload("res://art_direction.gd").ball(self, Vector3(cos(angle) * 0.7, 0.03, sin(angle) * 0.7), Vector3(0.11, 0.025, 0.16), Color("d7b787"))
 
 func burst() -> void:
 	splash()

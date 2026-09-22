@@ -1,4 +1,4 @@
-[gd_scene load_steps=106 format=3]
+[gd_scene load_steps=107 format=3]
 
 [ext_resource type="Script" path="res://player.gd" id="1"]
 [ext_resource type="Script" path="res://follow_camera.gd" id="2"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" path="res://combat_hud.gd" id="5"]
 [ext_resource type="Script" path="res://network_manager.gd" id="6"]
 [ext_resource type="Script" path="res://duel_hall.gd" id="7"]
+[ext_resource type="Script" path="res://art_direction.gd" id="8"]
 
 [sub_resource type="BoxMesh" id="1"]
 size = Vector3(110, 0.3, 80)
@@ -376,6 +377,9 @@ ambient_light_energy = 0.6
 tonemap_mode = 2
 
 [node name="OfficeDemo" type="Node3D"]
+
+[node name="ArtDirection" type="Node3D" parent="."]
+script = ExtResource("8")
 
 
 [node name="Environment" type="WorldEnvironment" parent="."]

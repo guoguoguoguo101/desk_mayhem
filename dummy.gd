@@ -5,8 +5,8 @@ var wobble_time := 0.0
 var hit_side := 1.0
 var airborne := false
 var airborne_lock := 0.0
-var max_health := 300
-var health := 300
+var max_health := 2000
+var health := 2000
 var downed := false
 var knockdown := false
 var knockdown_time := 0.0
@@ -19,15 +19,12 @@ var bounce_stun := 0.0
 var float_time := 0.0
 var juggle_hits := 0
 var juggled := false
-var float_stall := 0.0
 var float_apex := false
-var float_held := false
-var float_load := 0.0
 var float_session := false
+var air_punch_hold_used := false
 var kick_bounce := false
 var head_rider: Node = null
 var body_exceptions: Array = []
-var float_bar: Node3D
 var can_throw := false
 var throw_cooldown := 2.0
 var display_name := ""
@@ -53,6 +50,7 @@ func dress_dummy() -> void:
 	paint_part("Body", Color("3f6e8c"))
 	paint_part("Crossbar", Color("2f363c"))
 	paint_part("Base", Color("2a3036"))
+	preload("res://art_direction.gd").dress_dummy(visual)
 
 func paint_part(part_name: String, color: Color) -> void:
 	var part := visual.get_node_or_null(part_name)
@@ -73,7 +71,6 @@ func _ready() -> void:
 		if part is MeshInstance3D:
 			part.material_overlay = flash_material
 	dress_dummy()
-	float_bar = FloatRules.make_bar(self, 2.05)
 	if can_throw:
 		var head := visual.get_node_or_null("Head")
 		if head is MeshInstance3D:
@@ -120,6 +117,8 @@ func take_hit(attack_name: String = "文件夹") -> void:
 		"踢飞": 26,
 		"咖啡": 12,
 		"锅": 20,
+		"回旋锅": 14,
+		"回旋锅·回收": 12,
 		"扣锅": 35,
 		"空中扣锅": 32,
 		"旋伞": 8,
@@ -207,7 +206,9 @@ func punch_from(direction: Vector3) -> void:
 		take_hit("补拳")
 		if downed or bounce_pending:
 			return
-		FloatRules.extend(self, 3.4)
+		velocity.x = direction.x * 2.0
+		velocity.z = direction.z * 2.0
+		FloatRules.extend(self, FloatRules.PUNCH_HOLD)
 		return
 	if kick_bounce:
 		take_hit("补拳")
@@ -241,7 +242,7 @@ func punch_launch(direction: Vector3) -> void:
 	take_hit("上勾拳")
 	if hit_locked():
 		return
-	begin_juggle(direction * 1.6 + Vector3.UP * 6.5)
+	begin_juggle(direction * 1.6 + Vector3.UP * FloatRules.PUNCH_LAUNCH_SPEED)
 
 func bump(direction: Vector3, speed: float) -> void:
 	if hit_locked() or seated:
@@ -267,7 +268,7 @@ func launch_up(direction: Vector3) -> void:
 	take_hit("雨伞挑飞")
 	if hit_locked():
 		return
-	begin_juggle(direction * 1.4 + Vector3.UP * 6.6)
+	begin_juggle(direction * 1.4 + Vector3.UP * FloatRules.UMBRELLA_LAUNCH_SPEED)
 
 func kick_from(direction: Vector3) -> void:
 	if hit_locked():
@@ -324,7 +325,13 @@ func pot_float(_direction: Vector3 = Vector3.ZERO) -> void:
 	take_hit("锅")
 	if downed or bounce_pending or kick_bounce or not juggled:
 		return
-	FloatRules.extend(self, 3.6)
+	FloatRules.extend(self, FloatRules.POT_LIFT)
+
+func pot_outbound(direction: Vector3) -> void:
+	FloatRules.pot_hit(self, direction, false)
+
+func pot_return(direction: Vector3) -> void:
+	FloatRules.pot_hit(self, direction, true)
 
 func umbrella_spin_from(direction: Vector3) -> void:
 	if hit_locked():
@@ -340,7 +347,7 @@ func umbrella_spin_from(direction: Vector3) -> void:
 		take_hit("旋伞")
 		if downed or bounce_pending or kick_bounce or not juggled:
 			return
-		FloatRules.extend(self, 2.6)
+		FloatRules.extend(self, FloatRules.SPIN_LIFT)
 		return
 	take_hit("旋伞")
 	if hit_locked():
@@ -352,11 +359,6 @@ func umbrella_spin_from(direction: Vector3) -> void:
 	velocity.x = flat.x * 5.5
 	velocity.z = flat.z * 5.5
 	velocity.y = maxf(velocity.y, 0.2)
-
-func juggle_poke(direction: Vector3 = Vector3.ZERO) -> void:
-	if hit_locked() or not airborne or bounce_pending:
-		return
-	hold_juggle(direction, 3.0)
 
 func apply_hitstun(direction: Vector3, push: float, duration: float) -> void:
 	airborne = false
@@ -380,16 +382,6 @@ func begin_juggle(launch_velocity: Vector3) -> void:
 	float_time = 0.95
 	juggle_hits = 1
 	stun_time = 0.0
-
-func hold_juggle(direction: Vector3, lift: float) -> void:
-	juggle_hits += 1
-	float_time = maxf(float_time, 0.55 - minf(float(juggle_hits) * 0.04, 0.25))
-	velocity.y = maxf(velocity.y, lift)
-	airborne_lock = maxf(airborne_lock, 0.12)
-	if direction.length_squared() > 0.01:
-		var flat := direction.normalized()
-		velocity.x = flat.x * 2.2
-		velocity.z = flat.z * 2.2
 
 func shove_from(direction: Vector3) -> void:
 	if hit_locked() or seated:
@@ -434,9 +426,7 @@ func wall_pop_from_chair(throw_velocity: Vector3) -> void:
 		velocity = Vector3.ZERO
 		airborne = false
 		return
-	FloatRules.add_hit(self)
 	FloatRules.begin_float(self)
-	var mul := FloatRules.lift_mul(self)
 	juggled = true
 	kick_bounce = false
 	bounce_pending = false
@@ -444,9 +434,8 @@ func wall_pop_from_chair(throw_velocity: Vector3) -> void:
 	airborne_lock = 0.16
 	stun_time = 0.0
 	var pop := throw_velocity
-	pop.y *= maxf(mul, 0.16)
 	velocity = pop
-	float_time = 0.5 * maxf(mul, 0.16)
+	float_time = 0.5
 
 func release_seat(throw_velocity: Vector3) -> void:
 	var was_seated := seated
@@ -509,7 +498,7 @@ func _physics_process(delta: float) -> void:
 			airborne = true
 			airborne_lock = 0.14
 			FloatRules.begin_float(self)
-			float_time = 0.48 * maxf(FloatRules.lift_mul(self), 0.16)
+			float_time = 0.48
 		elif FloatRules.on_arena_floor(self) and airborne_lock <= 0.0:
 			begin_knockdown()
 		return
@@ -527,15 +516,14 @@ func _physics_process(delta: float) -> void:
 			bounce_pending = false
 			airborne = true
 			airborne_lock = 0.12
-			FloatRules.add_hit(self)
 			FloatRules.begin_float(self)
-			velocity.y = 5.0 * maxf(FloatRules.lift_mul(self), 0.18)
-			float_time = 0.42 * maxf(FloatRules.lift_mul(self), 0.18)
+			velocity.y = 5.0
+			float_time = 0.42
 			juggled = true
 			stun_time = maxf(stun_time, bounce_stun)
 			feedback.impact(global_position + Vector3.UP * 0.35, true, 2)
 		elif juggled:
-			if float_apex and float_stall <= 0.0 and velocity.y <= 0.2:
+			if float_apex and velocity.y <= 0.2:
 				begin_knockdown()
 		elif airborne:
 			begin_knockdown()
@@ -544,8 +532,8 @@ func _physics_process(delta: float) -> void:
 	place_rider()
 
 func _process(delta: float) -> void:
-	FloatRules.tick(self, delta)
-	FloatRules.show_bar(float_bar, self)
+	if is_instance_valid(player):
+		hit_label.visible = global_position.distance_to(player.global_position) < 10.0
 	stun_time = maxf(0.0, stun_time - delta)
 	if downed:
 		revive_time -= delta
@@ -611,7 +599,7 @@ func refresh_idle_label() -> void:
 		title = "即将扔出"
 	elif can_throw:
 		title = "远程稻草人"
-	hit_label.text = "%s  |  HP %d/%d" % [title, health, max_health]
+	hit_label.text = "%s · %d" % [title, health]
 	hit_label.modulate = Color(0.7, 0.9, 1.0) if can_throw else Color(1.0, 0.9, 0.56)
 
 func update_throw(delta: float) -> void:
