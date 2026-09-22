@@ -19,9 +19,14 @@ var bounce_stun := 0.0
 var float_time := 0.0
 var juggle_hits := 0
 var juggled := false
+var float_stall := 0.0
+var float_apex := false
+var float_held := false
 var float_load := 0.0
 var float_session := false
 var kick_bounce := false
+var head_rider: Node = null
+var body_exceptions: Array = []
 var float_bar: Node3D
 var can_throw := false
 var throw_cooldown := 2.0
@@ -94,12 +99,14 @@ func begin_knockdown() -> void:
 	airborne_lock = 0.0
 	stun_time = 0.0
 	velocity = Vector3.ZERO
+	drop_rider()
 	FloatRules.end_session(self)
 	feedback.impact(global_position + Vector3.UP * 0.25, false)
 
 func take_hit(attack_name: String = "文件夹") -> void:
 	if hit_locked():
 		return
+	drop_rider()
 	hit_count += 1
 	var damage: int = {
 		"轻拳": 8,
@@ -156,6 +163,7 @@ func knock_down() -> void:
 	stun_time = 0.0
 	seated = false
 	seat_anchor = null
+	drop_rider()
 	revive_time = revive_delay
 	velocity = Vector3.ZERO
 	visual.rotation = Vector3(-PI / 2.0, 0.0, 0.0)
@@ -362,6 +370,7 @@ func apply_hitstun(direction: Vector3, push: float, duration: float) -> void:
 
 func begin_juggle(launch_velocity: Vector3) -> void:
 	FloatRules.start_launch(self)
+	FloatRules.begin_float(self)
 	velocity = launch_velocity
 	airborne = true
 	juggled = true
@@ -396,6 +405,7 @@ func seat_on(anchor: Node3D) -> void:
 		return
 	seated = true
 	seat_anchor = anchor
+	drop_rider()
 	airborne = false
 	bounce_pending = false
 	float_time = 0.0
@@ -425,6 +435,7 @@ func wall_pop_from_chair(throw_velocity: Vector3) -> void:
 		airborne = false
 		return
 	FloatRules.add_hit(self)
+	FloatRules.begin_float(self)
 	var mul := FloatRules.lift_mul(self)
 	juggled = true
 	kick_bounce = false
@@ -448,6 +459,29 @@ func release_seat(throw_velocity: Vector3) -> void:
 		airborne = true
 		airborne_lock = 0.16
 
+func drop_rider() -> void:
+	if head_rider == null or not is_instance_valid(head_rider):
+		head_rider = null
+		return
+	if head_rider.has_method("drop_from_head"):
+		head_rider.drop_from_head()
+	else:
+		head_rider = null
+
+func place_rider() -> void:
+	if head_rider == null or not is_instance_valid(head_rider):
+		head_rider = null
+		return
+	if head_rider.get("head_carrier") != self:
+		head_rider = null
+		return
+	if head_rider.has_method("stick_to_carrier"):
+		head_rider.stick_to_carrier()
+
+func slide_body() -> void:
+	move_and_slide()
+	FloatRules.slip_off_bodies(self)
+
 func _physics_process(delta: float) -> void:
 	if player != null and player.hit_pause > 0.0:
 		return
@@ -461,46 +495,53 @@ func _physics_process(delta: float) -> void:
 	airborne_lock = maxf(0.0, airborne_lock - delta)
 	float_time = maxf(0.0, float_time - delta)
 	if downed or knockdown:
+		drop_rider()
 		velocity.x = 0.0
 		velocity.z = 0.0
 		velocity.y -= 19.0 * delta
-		move_and_slide()
+		slide_body()
 		return
 	if kick_bounce:
 		velocity.y -= 16.0 * delta
-		move_and_slide()
+		slide_body()
 		if FloatRules.try_kick_wall(self):
 			juggled = true
 			airborne = true
 			airborne_lock = 0.14
+			FloatRules.begin_float(self)
 			float_time = 0.48 * maxf(FloatRules.lift_mul(self), 0.16)
-		elif is_on_floor() and airborne_lock <= 0.0:
+		elif FloatRules.on_arena_floor(self) and airborne_lock <= 0.0:
 			begin_knockdown()
 		return
-	var gravity := 19.0
-	if juggled and float_time > 0.0 and not bounce_pending:
-		gravity = FloatRules.hang_gravity(self)
-	velocity.y -= gravity * delta
+	if juggled:
+		FloatRules.step_float(self, delta)
+	else:
+		velocity.y -= 19.0 * delta
 	if is_on_floor():
 		var drag := 14.0 if stun_time > 0.0 else 8.0
 		velocity.x = move_toward(velocity.x, 0.0, drag * delta)
 		velocity.z = move_toward(velocity.z, 0.0, drag * delta)
-	move_and_slide()
-	if is_on_floor() and airborne_lock <= 0.0:
+	slide_body()
+	if FloatRules.on_arena_floor(self) and airborne_lock <= 0.0:
 		if bounce_pending:
 			bounce_pending = false
 			airborne = true
 			airborne_lock = 0.12
 			FloatRules.add_hit(self)
+			FloatRules.begin_float(self)
 			velocity.y = 5.0 * maxf(FloatRules.lift_mul(self), 0.18)
 			float_time = 0.42 * maxf(FloatRules.lift_mul(self), 0.18)
 			juggled = true
 			stun_time = maxf(stun_time, bounce_stun)
 			feedback.impact(global_position + Vector3.UP * 0.35, true, 2)
-		elif juggled or airborne:
+		elif juggled:
+			if float_apex and float_stall <= 0.0 and velocity.y <= 0.2:
+				begin_knockdown()
+		elif airborne:
 			begin_knockdown()
 		elif float_session:
 			FloatRules.end_session(self)
+	place_rider()
 
 func _process(delta: float) -> void:
 	FloatRules.tick(self, delta)
@@ -527,6 +568,16 @@ func _process(delta: float) -> void:
 			visual.rotation.x = 0.0
 			visual.position.y = 0.0
 		return
+	if juggled or kick_bounce:
+		var lean := deg_to_rad(50.0) if kick_bounce else deg_to_rad(35.0)
+		visual.rotation.z = lerp_angle(visual.rotation.z, 0.0, 14.0 * delta)
+		visual.rotation.x = lerp_angle(visual.rotation.x, lean, 14.0 * delta)
+		visual.position.y = lerpf(visual.position.y, 0.0, 14.0 * delta)
+		visual.scale = Vector3.ONE
+		flash_material.albedo_color = Color(1.0, 0.62, 0.28, 0.45)
+		hit_label.text = "击飞  |  HP %d/%d" % [health, max_health]
+		hit_label.modulate = Color(1.0, 0.78, 0.42)
+		return
 	update_throw(delta)
 	if wobble_time > 0.0:
 		wobble_time -= delta
@@ -538,12 +589,9 @@ func _process(delta: float) -> void:
 		flash_material.albedo_color = flash_color
 		return
 	visual.rotation.z = 0.0
+	visual.rotation.x = lerp_angle(visual.rotation.x, 0.0, 14.0 * delta)
 	visual.scale = Vector3.ONE
-	if juggled:
-		flash_material.albedo_color = Color(1.0, 0.62, 0.28, 0.45)
-		hit_label.text = "击飞  |  HP %d/%d" % [health, max_health]
-		hit_label.modulate = Color(1.0, 0.78, 0.42)
-	elif stun_time > 0.8:
+	if stun_time > 0.8:
 		flash_material.albedo_color = Color(0.65, 0.78, 1.0, 0.35 + sin(stun_time * 18.0) * 0.12)
 		hit_label.text = "眩晕 %.1f  |  HP %d/%d" % [stun_time, health, max_health]
 		hit_label.modulate = Color(0.75, 0.86, 1.0)

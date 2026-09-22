@@ -1,6 +1,7 @@
 extends Node
 
 const PORT := 24680
+var session_port := PORT
 const ROOM_DUEL := "duel"
 const ROOM_TEAMS := "teams"
 const ROOM_FFA := "ffa"
@@ -56,6 +57,17 @@ var kills := {}
 var deaths := {}
 var last_kill_line := ""
 var last_kill_until := 0
+var net_debug: Label
+var action_seq := 0
+var seen_action := {}
+var input_seq := 0
+var seen_input := {}
+var snapshot_seq := 0
+var last_snapshot_msec := 0
+var snapshots_sent := 0
+var snapshots_seen := 0
+var last_action_name := ""
+var last_hit_line := ""
 
 @onready var local_player: CharacterBody3D = get_node("../Player")
 @onready var feedback: Node3D = get_node("../CombatFeedback")
@@ -74,6 +86,16 @@ func _ready() -> void:
 	local_player.controls_locked = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	build_scoreboard()
+	if pvp_test_role() != "":
+		var tester: Node = load("res://pvp_net_test.gd").new()
+		tester.name = "PvpNetTest"
+		add_child(tester)
+
+func pvp_test_role() -> String:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--pvp-test="):
+			return arg.trim_prefix("--pvp-test=")
+	return ""
 
 func has_menu_open() -> bool:
 	return phase == "menu" or phase == "joining"
@@ -225,6 +247,15 @@ func build_match_label() -> void:
 	ip_field.placeholder_text = "这里是主机 IP，Esc 后可以选中复制"
 	ip_field.visible = false
 	layer.add_child(ip_field)
+	net_debug = Label.new()
+	net_debug.position = Vector2(320, 114)
+	net_debug.size = Vector2(940, 48)
+	net_debug.add_theme_font_size_override("font_size", 14)
+	net_debug.add_theme_constant_override("outline_size", 4)
+	net_debug.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	net_debug.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	net_debug.visible = false
+	layer.add_child(net_debug)
 
 func refresh_lobby_status(extra: String) -> void:
 	var ips := lan_ips()
@@ -258,9 +289,9 @@ func start_hall() -> void:
 	close_peer()
 	var peer := ENetMultiplayerPeer.new()
 	peer.set_bind_ip("0.0.0.0")
-	var error := peer.create_server(PORT, 4)
+	var error := peer.create_server(session_port, 4)
 	if error != OK:
-		refresh_lobby_status("开设失败，端口 %d 正被占用。" % PORT)
+		refresh_lobby_status("开设失败，端口 %d 正被占用。" % session_port)
 		return
 	multiplayer.multiplayer_peer = peer
 	room_kind = ROOM_DUEL
@@ -279,7 +310,7 @@ func start_join() -> void:
 		return
 	close_peer()
 	var peer := ENetMultiplayerPeer.new()
-	var error := peer.create_client(address, PORT)
+	var error := peer.create_client(address, session_port)
 	if error != OK:
 		refresh_lobby_status("连接失败，请检查 IP。")
 		return
@@ -293,9 +324,11 @@ func begin_play(slot: int, networked: bool) -> void:
 	set_training(not networked)
 	local_player.controls_locked = false
 	local_player.remove_from_group("fighters")
+	local_player.remove_from_group("combat_targets")
 	if networked:
 		local_player.team_id = team_of(room_kind, slot)
 		local_player.add_to_group("fighters")
+		local_player.add_to_group("combat_targets")
 	else:
 		local_player.team_id = -1
 	local_player.slot_index = slot
@@ -444,8 +477,16 @@ func spawn_puppet(peer_id: int, slot: int, team: int) -> void:
 	puppet.owner_peer = peer_id
 	puppet.team_id = team
 	puppet.slot_index = slot
+	puppet.position = SPAWNS[slot]
+	for shape_node in puppet.find_children("*", "CollisionShape3D", true, false):
+		var collision := shape_node as CollisionShape3D
+		if collision.shape:
+			collision.shape = collision.shape.duplicate()
 	get_parent().add_child(puppet)
-	puppet.set_physics_process(false)
+	puppet.global_position = SPAWNS[slot]
+	puppet.force_update_transform()
+	puppet.net_simulated = multiplayer.is_server()
+	puppet.set_physics_process(puppet.net_simulated)
 	puppet.set_process_unhandled_input(false)
 	puppet.max_health = 400
 	puppet.reset_for_round()
@@ -519,19 +560,28 @@ func _process(_delta: float) -> void:
 	var now := Time.get_ticks_msec()
 	if now < next_state_at_msec:
 		return
-	next_state_at_msec = now + 50
-	rpc("receive_state", local_player.capture_net_state())
+	var interval := 33
+	next_state_at_msec = now + interval
+	if multiplayer.is_server():
+		broadcast_snapshot()
+	else:
+		send_control()
 
 func refresh_match_label() -> void:
 	if phase != "play":
 		match_label.visible = false
 		ip_field.visible = false
+		if net_debug:
+			net_debug.visible = false
 		return
 	match_label.visible = true
 	if room_kind == "solo":
 		match_label.text = "单人练习    F8 回大厅"
 		ip_field.visible = false
+		if net_debug:
+			net_debug.visible = false
 		return
+	refresh_net_debug()
 	var ips := lan_ips()
 	var ip_text := "、".join(ips) if not ips.is_empty() else "无"
 	ip_field.visible = true
@@ -563,7 +613,194 @@ func _unhandled_input(event: InputEvent) -> void:
 			leave_room(note)
 			get_viewport().set_input_as_handled()
 
-@rpc("any_peer", "call_remote", "unreliable")
+func send_control() -> void:
+	if local_player == null:
+		return
+	input_seq += 1
+	var control: Dictionary = local_player.capture_control()
+	rpc_id(1, "client_input", control["move"], control["aim"], input_seq, bool(control.get("crouch", false)))
+
+@rpc("any_peer", "call_remote", "unreliable_ordered")
+func client_input(move: Vector3, aim: Vector3, seq: int, crouch: bool = false) -> void:
+	if not multiplayer.is_server() or not in_match():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if int(seen_input.get(sender, 0)) >= seq:
+		return
+	seen_input[sender] = seq
+	var puppet := puppet_for(sender)
+	if puppet == null:
+		return
+	puppet.net_move = move
+	puppet.net_aim = aim
+	puppet.net_crouch = crouch
+
+func request_action(action: String, aim: Vector3) -> void:
+	if multiplayer.is_server() or not in_match():
+		return
+	action_seq += 1
+	last_action_name = "%s #%d" % [action, action_seq]
+	rpc_id(1, "host_action", action, aim, action_seq)
+
+@rpc("any_peer", "call_remote", "reliable")
+func host_action(action: String, aim: Vector3, seq: int) -> void:
+	if not multiplayer.is_server() or not in_match():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if not peer_in_room(sender) or int(seen_action.get(sender, 0)) >= seq:
+		return
+	seen_action[sender] = seq
+	var puppet := puppet_for(sender)
+	if puppet == null or not puppet.has_method("call_action"):
+		return
+	puppet.net_aim = aim
+	if aim.length_squared() > 0.001:
+		puppet.face_to(aim)
+	last_action_name = "收到 %s #%d" % [action, seq]
+	puppet.call_action(action)
+
+func broadcast_snapshot() -> void:
+	var bodies: Array = []
+	bodies.append(pack_body(local_player, multiplayer.get_unique_id()))
+	for peer_id in puppets.keys():
+		var body := puppet_for(int(peer_id))
+		if body:
+			bodies.append(pack_body(body, int(peer_id)))
+	snapshot_seq += 1
+	snapshots_sent += 1
+	rpc("world_state", bodies, snapshot_seq)
+
+func pack_body(body: Node, peer_id: int) -> Dictionary:
+	var facing := 0.0
+	var visual: Node3D = body.get("visual")
+	if visual:
+		facing = visual.rotation.y
+	return {
+		"id": peer_id,
+		"p": body.global_position,
+		"v": body.velocity,
+		"f": facing,
+		"hp": int(body.get("health")),
+		"down": bool(body.get("downed")),
+		"kd": bool(body.get("knockdown")),
+		"jug": bool(body.get("juggled")),
+	}
+
+@rpc("authority", "call_remote", "unreliable_ordered")
+func world_state(bodies: Array, seq: int) -> void:
+	if multiplayer.is_server() or not in_match() or seq < snapshot_seq:
+		return
+	snapshot_seq = seq
+	snapshots_seen += 1
+	last_snapshot_msec = Time.get_ticks_msec()
+	var self_id := multiplayer.get_unique_id()
+	for state in bodies:
+		if typeof(state) != TYPE_DICTIONARY:
+			continue
+		var peer_id := int(state["id"])
+		if peer_id == self_id:
+			local_player.reconcile_owner(state)
+			continue
+		var puppet := puppet_for(peer_id)
+		if puppet and puppet.has_method("push_net_sample"):
+			puppet.push_net_sample(state)
+
+func host_apply_hit(attacker: Node, target: Node, method: String, direction: Vector3, attack_name: String) -> bool:
+	if not multiplayer.is_server() or attacker == null or target == null:
+		return false
+	if attacker.has_method("can_hurt") and not attacker.can_hurt(target):
+		return false
+	var before := int(target.get("health"))
+	var attacker_peer := int(attacker.get("owner_peer"))
+	if attacker_peer <= 0:
+		attacker_peer = multiplayer.get_unique_id()
+	var victim_peer := int(target.get("owner_peer"))
+	if victim_peer <= 0:
+		victim_peer = multiplayer.get_unique_id()
+	if method != "" and target.has_method(method):
+		target.call(method, direction)
+	elif attack_name != "" and target.has_method("take_hit"):
+		target.take_hit(attack_name)
+	else:
+		return false
+	var after := int(target.get("health"))
+	var at: Vector3 = attacker.global_position
+	var hit_at: Vector3 = target.global_position
+	var launch: Vector3 = target.velocity
+	last_hit_line = "命中 %s→%s  t=%d  攻(%.1f,%.1f,%.1f) 受(%.1f,%.1f,%.1f) %s  %d→%d  v(%.1f,%.1f,%.1f)" % [
+		peer_name(attacker_peer), peer_name(victim_peer), Time.get_ticks_msec(),
+		at.x, at.y, at.z, hit_at.x, hit_at.y, hit_at.z,
+		method if method != "" else attack_name, before, after, launch.x, launch.y, launch.z,
+	]
+	print(last_hit_line)
+	if victim_peer != multiplayer.get_unique_id():
+		rpc_id(
+			victim_peer, "confirm_hit", method, attack_name, direction, after,
+			bool(target.get("downed")), launch, bool(target.get("juggled")),
+			bool(target.get("kick_bounce")), float(target.get("victim_float")),
+			bool(target.get("bounce_pending"))
+		)
+	if before > 0 and after <= 0:
+		rpc("register_kill", attacker_peer, "p:%d" % victim_peer)
+	var heavy := method in ["punch_launch", "launch_up", "slam_from_pot", "kick_from"]
+	if feedback and feedback.has_method("impact"):
+		feedback.impact(hit_at + Vector3.UP * 1.15, heavy, int(attacker.get("combo_count")))
+	attacker.hit_pause = maxf(float(attacker.get("hit_pause")), 0.05 if heavy else 0.03)
+	return true
+
+@rpc("authority", "call_remote", "reliable")
+func confirm_hit(
+	method: String, attack_name: String, direction: Vector3, host_health: int,
+	host_downed: bool, host_velocity: Vector3, host_juggled: bool, host_kick_bounce: bool,
+	host_float: float, host_bounce: bool
+) -> void:
+	if not in_match():
+		return
+	if method != "" and local_player.has_method(method):
+		local_player.call(method, direction)
+	elif attack_name != "" and local_player.has_method("take_hit"):
+		local_player.take_hit(attack_name)
+	local_player.health = host_health
+	local_player.downed = host_downed and host_health <= 0
+	local_player.velocity = host_velocity
+	local_player.juggled = host_juggled
+	local_player.kick_bounce = host_kick_bounce
+	local_player.victim_float = host_float
+	local_player.bounce_pending = host_bounce
+
+func refresh_net_debug() -> void:
+	if net_debug == null:
+		return
+	net_debug.visible = true
+	var age := -1
+	if last_snapshot_msec > 0:
+		age = Time.get_ticks_msec() - last_snapshot_msec
+	var foe := first_puppet()
+	var foe_pos := "无"
+	if foe:
+		foe_pos = "(%.1f, %.1f, %.1f)" % [foe.global_position.x, foe.global_position.y, foe.global_position.z]
+	var me := local_player.global_position
+	net_debug.text = "Ping %d ms    快照 发%d 收%d    距上次 %s ms    我(%.1f, %.1f, %.1f) 对手%s    %s\n%s" % [
+		ping_ms(), snapshots_sent, snapshots_seen, str(age), me.x, me.y, me.z, foe_pos, last_action_name, last_hit_line,
+	]
+
+func ping_ms() -> int:
+	var peer := multiplayer.multiplayer_peer
+	if peer == null or not (peer is ENetMultiplayerPeer):
+		return -1
+	var enet := peer as ENetMultiplayerPeer
+	var target := 1
+	if multiplayer.is_server():
+		var foe := first_puppet()
+		if foe == null:
+			return -1
+		target = int(foe.owner_peer)
+	var packet := enet.get_peer(target)
+	if packet == null:
+		return -1
+	return int(packet.get_statistic(ENetPacketPeer.PEER_ROUND_TRIP_TIME))
+
+@rpc("any_peer", "call_remote", "unreliable_ordered")
 func receive_state(state: Dictionary) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	var puppet := puppet_for(sender)
@@ -578,7 +815,8 @@ func receive_hit(method: String, attack_name: String, direction: Vector3, contac
 	if sender == 0 or not peer_in_room(sender):
 		return
 	var trusted := method == "begin_chair_ride" or method == "end_chair_ride" or method == "drop_from_chair"
-	if not trusted and local_player.global_position.distance_to(contact) > 8.0:
+	var reach := 12.0 if local_player.airborne_net() else 8.0
+	if not trusted and local_player.global_position.distance_to(contact) > reach:
 		return
 	var landed := false
 	if method != "" and HIT_METHODS.has(method) and local_player.has_method(method):
@@ -639,7 +877,7 @@ func register_kill(killer_id: int, victim_key: String) -> void:
 	if not in_match() or killer_id <= 0:
 		return
 	var sender := multiplayer.get_remote_sender_id()
-	if sender != 0:
+	if sender != 0 and sender != 1:
 		var victim_id := -1
 		if victim_key.begins_with("p:"):
 			victim_id = int(victim_key.substr(2))
@@ -848,6 +1086,7 @@ func leave_room(reason: String) -> void:
 	local_player.chair_ride = false
 	local_player.seated = false
 	local_player.remove_from_group("fighters")
+	local_player.remove_from_group("combat_targets")
 	local_player.reset_for_round()
 	local_player.global_position = home_spawn
 	local_player.spawn_point = home_spawn
@@ -859,6 +1098,12 @@ func leave_room(reason: String) -> void:
 	lobby.show()
 	match_label.visible = false
 	ip_field.visible = false
+	if net_debug:
+		net_debug.visible = false
+	seen_action.clear()
+	seen_input.clear()
+	last_hit_line = ""
+	last_action_name = ""
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	refresh_lobby_status(reason)
 	closing = false

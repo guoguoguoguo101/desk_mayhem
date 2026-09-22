@@ -15,7 +15,7 @@ var shown_combo := 0
 var combo_pop := 0.0
 
 func _ready() -> void:
-	instructions.text = "WASD 移动，鼠标转镜头，Shift 闪现，空格跳。Tab 选武器槽，1-4 装备，Q/E 与 F/C 是两把武器\n左键打中才能连：挥拳、连拳、上勾。上勾或雨伞挑飞后，扣锅会变快，右键踢中会踹得更远"
+	instructions.text = "WASD 移动，鼠标转镜头，Shift 闪现，空格跳。Tab 选武器槽，1-4 装备，Q/E 与 F/C 是两把武器\n左键打中才能连：挥拳、连拳、上勾。对手浮空后左键变为补拳。上勾或雨伞挑飞后，扣锅会变快，右键踢中会踹得更远"
 	instructions.offset_right = 1100.0
 	instructions.offset_bottom = 78.0
 	instructions.add_theme_font_size_override("font_size", 16)

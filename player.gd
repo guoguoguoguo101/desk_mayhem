@@ -94,6 +94,9 @@ var punch_chain := 0.0
 var stagger_time := 0.0
 var juggled := false
 var victim_float := 0.0
+var float_stall := 0.0
+var float_apex := false
+var float_held := false
 var bounce_pending := false
 var juggle_hits := 0
 var float_load := 0.0
@@ -101,6 +104,16 @@ var float_session := false
 var kick_bounce := false
 var float_bar: Node3D
 var airborne := false
+var body_exceptions: Array = []
+var crouching := false
+var net_crouch := false
+var head_carrier: Node = null
+var head_rider: Node = null
+var head_lock := 0.0
+var capsule: CapsuleShape3D
+var capsule_node: CollisionShape3D
+var stand_height := 1.7
+var stand_shape_y := 0.0
 var block_time := 0.0
 var speed_buff_time := 0.0
 var action_lock := 0.0
@@ -110,6 +123,13 @@ var drink_time := 0.0
 var push_cd := {}
 var controls_locked := true
 var net_puppet := false
+var net_simulated := false
+var net_move := Vector3.ZERO
+var net_aim := Vector3.ZERO
+var scripted_drive := false
+var scripted_move := Vector3.ZERO
+var scripted_aim := Vector3.ZERO
+var net_samples: Array = []
 var owner_peer := 0
 var team_id := -1
 var slot_index := 0
@@ -118,6 +138,10 @@ var chair_ride := false
 var net_pinned := false
 var net_goal := Vector3.ZERO
 var has_net_goal := false
+var net_send_seq := 0
+var net_recv_seq := 0
+var net_hold_correction := false
+var net_hold_until_msec := 0
 
 var chair_rest_position := Vector3.ZERO
 var arm_rest := Vector3.ZERO
@@ -145,6 +169,7 @@ func _ready() -> void:
 		add_to_group("fighters")
 	else:
 		add_to_group("player")
+	setup_capsule()
 	spawn_point = global_position
 	chair_rest_position = chair_visual.position
 	umbrella_rest = umbrella_visual.position
@@ -275,7 +300,7 @@ func _process(delta: float) -> void:
 	punch_chain = maxf(0.0, punch_chain - delta)
 	stagger_time = maxf(0.0, stagger_time - delta)
 	victim_float = maxf(0.0, victim_float - delta)
-	if not net_puppet:
+	if not net_puppet or net_simulated:
 		FloatRules.tick(self, delta)
 	FloatRules.show_bar(float_bar, self)
 	if combo_timer <= 0.0:
@@ -292,7 +317,7 @@ func _process(delta: float) -> void:
 	flinch_time = maxf(0.0, flinch_time - delta)
 	var spin_before := spin_time
 	spin_time = maxf(0.0, spin_time - delta)
-	if not net_puppet and not spin_hit_done and spin_before > SPIN_HIT_AT and spin_time <= SPIN_HIT_AT:
+	if (not net_puppet or net_simulated) and not spin_hit_done and spin_before > SPIN_HIT_AT and spin_time <= SPIN_HIT_AT:
 		spin_hit_done = true
 		resolve_umbrella_spin()
 	if spin_time > 0.0:
@@ -300,17 +325,13 @@ func _process(delta: float) -> void:
 		if spin_ghost_time <= 0.0:
 			spin_ghost_time = 0.05
 			feedback.spin_ghost(global_position + Vector3.UP * 0.35, visual.rotation.y)
-	if net_puppet:
-		var net_moving := Vector2(velocity.x, velocity.z).length()
-		if net_moving > 0.6 and kick_time <= 0.0 and punch_time <= 0.0:
-			walk_phase += delta * net_moving * 2.4
-		if has_net_goal and not net_pinned:
-			if global_position.distance_to(net_goal) > 3.5:
-				global_position = net_goal
-			else:
-				global_position = global_position.lerp(net_goal, minf(1.0, 16.0 * delta))
-		var lay := lie_tilt()
-		visual.rotation.z = lerp_angle(visual.rotation.z, lay, 8.0 * delta)
+	if net_puppet and not net_simulated:
+		present_remote()
+		var shown := Vector2(velocity.x, velocity.z).length()
+		if shown > 0.6 and kick_time <= 0.0 and punch_time <= 0.0:
+			walk_phase += delta * shown * 2.4
+		apply_body_pose(delta)
+		apply_crouch_shape()
 		update_visuals()
 		return
 	var moving := Vector2(velocity.x, velocity.z).length()
@@ -336,17 +357,15 @@ func _process(delta: float) -> void:
 		victim_float = 0.0
 		bounce_pending = false
 		revive_time -= delta
-		visual.rotation.z = lerp_angle(visual.rotation.z, deg_to_rad(75.0), 8.0 * delta)
 		if revive_time <= 0.0:
 			revive()
 	elif knockdown:
 		knockdown_time -= delta
-		visual.rotation.z = lerp_angle(visual.rotation.z, deg_to_rad(72.0), 8.0 * delta)
 		if knockdown_time <= 0.0:
 			knockdown = false
 			knockdown_time = 0.0
-	else:
-		visual.rotation.z = lerp_angle(visual.rotation.z, flinch_tilt(), 16.0 * delta)
+	apply_body_pose(delta)
+	apply_crouch_shape()
 	update_visuals()
 
 func tick_cooldowns(delta: float) -> void:
@@ -365,12 +384,23 @@ func tick_push_cooldowns(delta: float) -> void:
 	for who in stale:
 		push_cd.erase(who)
 
-func lie_tilt() -> float:
-	if downed:
-		return deg_to_rad(75.0)
-	if knockdown:
-		return deg_to_rad(72.0)
-	return flinch_tilt()
+func apply_body_pose(delta: float) -> void:
+	var laying := downed or knockdown
+	var floating := (juggled or kick_bounce) and not laying
+	var speed := 14.0
+	if laying:
+		visual.rotation.x = lerp_angle(visual.rotation.x, 0.0, speed * delta)
+		visual.rotation.z = lerp_angle(visual.rotation.z, deg_to_rad(88.0), speed * delta)
+		visual.position.y = lerpf(visual.position.y, -0.46, speed * delta)
+	elif floating:
+		var lean := deg_to_rad(50.0) if kick_bounce else deg_to_rad(35.0)
+		visual.rotation.x = lerp_angle(visual.rotation.x, lean, speed * delta)
+		visual.rotation.z = lerp_angle(visual.rotation.z, 0.0, speed * delta)
+		visual.position.y = lerpf(visual.position.y, 0.0, speed * delta)
+	else:
+		visual.rotation.x = lerp_angle(visual.rotation.x, 0.0, 16.0 * delta)
+		visual.rotation.z = lerp_angle(visual.rotation.z, flinch_tilt(), 16.0 * delta)
+		visual.position.y = lerpf(visual.position.y, 0.0, 16.0 * delta)
 
 func flinch_tilt() -> float:
 	if flinch_time <= 0.0 or downed:
@@ -385,7 +415,7 @@ func update_visuals() -> void:
 		var flare := sin(progress * PI)
 		visual.scale = Vector3(1.0 + flare * 0.22, 1.0 - flare * 0.14, 1.0 + flare * 0.22)
 		visual.rotation.y = spin_facing + progress * TAU * 2.0
-	elif flinch_time > 0.0 and not downed:
+	elif flinch_time > 0.0 and not downed and not knockdown:
 		var amount := clampf(flinch_time / 0.2, 0.0, 1.0)
 		visual.scale = Vector3(1.0 + amount * 0.2, 1.0 - amount * 0.16, 1.0 + amount * 0.2)
 	else:
@@ -455,6 +485,9 @@ func update_visuals() -> void:
 		pot_visual.position = Vector3(0.2, 0.15 + swing * 0.85, -0.45 - swing * 0.35)
 		pot_visual.rotation.x = -swing * 1.4
 	cup_visual.visible = drink_time > 0.0
+	if crouching and not downed and not knockdown and not juggled and not kick_bounce:
+		visual.scale = Vector3(visual.scale.x, visual.scale.y * 0.62, visual.scale.z)
+		visual.position.y -= 0.2
 
 func _unhandled_input(event: InputEvent) -> void:
 	if net_puppet or controls_locked:
@@ -470,8 +503,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
+			replicate_action("punch")
 			punch()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			replicate_action("kick")
 			kick()
 		return
 	if event is InputEventKey:
@@ -489,16 +524,22 @@ func _unhandled_input(event: InputEvent) -> void:
 				banner = "更换武器 %s" % ("A" if edit_slot == 0 else "B")
 				banner_time = 0.8
 			KEY_Q:
+				replicate_action("skill_a0")
 				cast_weapon_skill(0, 0)
 			KEY_E:
+				replicate_action("skill_a1")
 				cast_weapon_skill(0, 1)
 			KEY_F:
+				replicate_action("skill_b0")
 				cast_weapon_skill(1, 0)
 			KEY_C:
+				replicate_action("skill_b1")
 				cast_weapon_skill(1, 1)
 			KEY_SHIFT:
+				replicate_action("blink")
 				short_blink()
 			KEY_SPACE:
+				replicate_action("jump")
 				jump()
 
 func can_act() -> bool:
@@ -548,6 +589,9 @@ func cast_weapon_skill(slot: int, skill_index: int) -> void:
 			chair_mount_toggle()
 
 func punch() -> void:
+	if foe_juggled(1.95, 3.2):
+		air_punch()
+		return
 	var chaining := punch_chain > 0.0
 	if not can_chain() or (not chaining and float(cd["punch"]) > 0.0):
 		return
@@ -575,6 +619,22 @@ func punch() -> void:
 	else:
 		punch_chain = 0.0
 		punch_index = 0
+
+func air_punch() -> void:
+	if not can_chain():
+		return
+	punch_chain = 0.0
+	punch_index = 0
+	cancel_time = 0.0
+	cd["punch"] = 0.28
+	action_lock = 0.16
+	punch_time = 0.14
+	var forward := facing_direction()
+	feedback.play_swing()
+	await get_tree().create_timer(0.05).timeout
+	if not is_inside_tree() or downed:
+		return
+	strike_targets(forward, 1.95, 0.15, 3.2, "punch_from")
 
 func kick() -> void:
 	if not can_chain() or float(cd["kick"]) > 0.0:
@@ -605,6 +665,8 @@ func umbrella_action() -> void:
 func start_dash() -> void:
 	if not can_act() or float(cd["dash"]) > 0.0:
 		return
+	drop_from_head()
+	drop_rider()
 	dash_direction = facing_direction()
 	dash_time = 0.38
 	dash_trail_time = 0.0
@@ -754,6 +816,8 @@ func summon_chair() -> void:
 	forced_facing = 0.35
 	cd["chair"] = CD_CHAIR
 	feedback.play_swing()
+	if in_net_match() and not multiplayer.is_server():
+		return
 	var chair := RUSHING_CHAIR.new()
 	get_parent().add_child(chair)
 	chair.global_position = global_position + forward * 1.15
@@ -767,11 +831,15 @@ func chair_mount_toggle() -> void:
 	if downed or knockdown or float(cd["mount"]) > 0.0:
 		return
 	if mounted:
+		drop_from_head()
+		drop_rider()
 		mounted = false
 		cd["mount"] = CD_MOUNT
 		return
 	if not can_act():
 		return
+	drop_from_head()
+	drop_rider()
 	mounted = true
 	cd["mount"] = CD_MOUNT
 	velocity.x = 0.0
@@ -779,6 +847,8 @@ func chair_mount_toggle() -> void:
 	feedback.play_swing()
 
 func spawn_projectile(kind: int, projectile_velocity: Vector3, forward: Vector3) -> void:
+	if in_net_match() and not multiplayer.is_server():
+		return
 	var item := THROWN_ITEM.new()
 	get_parent().add_child(item)
 	item.global_position = global_position + Vector3.UP * 0.45 + forward * 0.7
@@ -788,7 +858,7 @@ func spawn_projectile(kind: int, projectile_velocity: Vector3, forward: Vector3)
 		net.announce_throw(kind, item.global_position, projectile_velocity)
 
 func can_hurt(target: Node) -> bool:
-	if target == self or net_puppet:
+	if target == self or (net_puppet and not net_simulated):
 		return false
 	var other_team = target.get("team_id")
 	if team_id < 0 or other_team == null or int(other_team) < 0:
@@ -806,6 +876,12 @@ func connect_hit(target: Node, method: String, direction: Vector3, attack_name :
 		var hall_net := get_tree().get_first_node_in_group("network")
 		if hall_net and hall_net.in_match() and hall_net.has_method("relay_dummy_hit"):
 			return hall_net.relay_dummy_hit(target, method, direction, attack_name)
+	if in_net_match() and (target.get("net_puppet") or target.is_in_group("fighters") or target.is_in_group("player")):
+		var fight_net := get_tree().get_first_node_in_group("network")
+		if fight_net and fight_net.has_method("host_apply_hit"):
+			if not multiplayer.is_server():
+				return false
+			return fight_net.host_apply_hit(self, target, method, direction, attack_name)
 	if target.get("net_puppet"):
 		var net := get_tree().get_first_node_in_group("network")
 		if net and net.in_match() and net.has_method("relay_hit"):
@@ -818,10 +894,125 @@ func connect_hit(target: Node, method: String, direction: Vector3, attack_name :
 		return true
 	return false
 
+func in_net_match() -> bool:
+	var net := get_tree().get_first_node_in_group("network")
+	return net != null and net.has_method("in_match") and net.in_match()
+
+func replicate_action(action: String) -> void:
+	if net_puppet or not in_net_match() or multiplayer.is_server():
+		return
+	var net := get_tree().get_first_node_in_group("network")
+	if net and net.has_method("request_action"):
+		net.request_action(action, aim_direction())
+
+func call_action(action: String) -> void:
+	match action:
+		"punch":
+			punch()
+		"kick":
+			kick()
+		"skill_a0":
+			cast_weapon_skill(0, 0)
+		"skill_a1":
+			cast_weapon_skill(0, 1)
+		"skill_b0":
+			cast_weapon_skill(1, 0)
+		"skill_b1":
+			cast_weapon_skill(1, 1)
+		"blink":
+			short_blink()
+		"jump":
+			jump()
+
+func capture_control() -> Dictionary:
+	if scripted_drive:
+		var aim := scripted_aim if scripted_aim.length_squared() > 0.001 else scripted_move
+		return {"move": scripted_move, "aim": aim, "crouch": false}
+	var input_vector := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+	var wasd := Vector2(
+		float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)),
+		float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W))
+	)
+	if wasd.length_squared() > 0.0:
+		input_vector = wasd.normalized()
+	var direction := Vector3.ZERO
+	if camera and input_vector.length_squared() > 0.0:
+		var right := camera.global_transform.basis.x
+		var forward := -camera.global_transform.basis.z
+		right.y = 0.0
+		forward.y = 0.0
+		direction = (right.normalized() * input_vector.x + forward.normalized() * -input_vector.y).normalized()
+	return {"move": direction, "aim": aim_direction(), "crouch": Input.is_key_pressed(KEY_CTRL)}
+
+func push_net_sample(state: Dictionary) -> void:
+	net_samples.append({
+		"t": Time.get_ticks_msec(),
+		"p": state["p"],
+		"f": float(state["f"]),
+		"jug": bool(state["jug"]),
+		"down": bool(state["down"]),
+		"kd": bool(state.get("kd", false)),
+		"kb": bool(state.get("kb", false)),
+		"cr": bool(state.get("cr", false)),
+		"hp": int(state["hp"]),
+	})
+	var cutoff := Time.get_ticks_msec() - 500
+	while net_samples.size() > 2 and int(net_samples[0]["t"]) < cutoff:
+		net_samples.remove_at(0)
+
+func present_remote() -> void:
+	if net_samples.is_empty():
+		return
+	var show_t := Time.get_ticks_msec() - 100
+	var newest: Dictionary = net_samples[net_samples.size() - 1]
+	juggled = bool(newest["jug"])
+	kick_bounce = bool(newest.get("kb", false))
+	crouching = bool(newest.get("cr", false))
+	downed = bool(newest["down"])
+	knockdown = bool(newest["kd"])
+	health = int(newest["hp"])
+	if int(newest["t"]) <= show_t or net_samples.size() == 1:
+		global_position = newest["p"]
+		visual.rotation.y = float(newest["f"])
+		return
+	var older: Dictionary = net_samples[0]
+	var newer: Dictionary = newest
+	for index in range(net_samples.size() - 1):
+		var left: Dictionary = net_samples[index]
+		var right: Dictionary = net_samples[index + 1]
+		if int(left["t"]) <= show_t and show_t <= int(right["t"]):
+			older = left
+			newer = right
+			break
+	var span := maxi(1, int(newer["t"]) - int(older["t"]))
+	var weight := clampf(float(show_t - int(older["t"])) / float(span), 0.0, 1.0)
+	global_position = (older["p"] as Vector3).lerp(newer["p"], weight)
+	visual.rotation.y = lerp_angle(float(older["f"]), float(newer["f"]), weight)
+
+func reconcile_owner(state: Dictionary) -> void:
+	health = int(state["hp"])
+	var host_down := bool(state["down"])
+	var host_kd := bool(state.get("kd", false))
+	if host_down != downed:
+		downed = host_down
+	if host_kd != knockdown:
+		knockdown = host_kd
+	var host_pos: Vector3 = state["p"]
+	var gap := global_position.distance_to(host_pos)
+	if gap > 3.0:
+		global_position = host_pos
+		velocity = state["v"]
+	elif gap > 1.2:
+		global_position = global_position.lerp(host_pos, 0.2)
+
 func capture_net_state() -> Dictionary:
+	net_send_seq += 1
 	return {
+		"seq": net_send_seq,
 		"p": global_position,
 		"v": velocity,
+		"bf": bounce_pending,
+		"vf": victim_float,
 		"f": spin_facing if spin_time > 0.0 else visual.rotation.y,
 		"hp": health,
 		"down": downed,
@@ -830,6 +1021,7 @@ func capture_net_state() -> Dictionary:
 		"fl": float_load,
 		"fs": float_session,
 		"kb": kick_bounce,
+		"cr": crouching,
 		"mount": mounted,
 		"block": block_time,
 		"punch": punch_time,
@@ -845,13 +1037,26 @@ func capture_net_state() -> Dictionary:
 func apply_net_state(state: Dictionary) -> void:
 	if not net_puppet or not state.has("p"):
 		return
+	var seq := int(state.get("seq", 0))
+	if seq > 0 and seq <= net_recv_seq:
+		return
+	if seq > 0:
+		net_recv_seq = seq
 	health = int(state["hp"])
 	downed = bool(state["down"])
 	knockdown = bool(state.get("kd", false))
+	var snapshot_air := bool(state["jug"]) or bool(state.get("kb", false)) or bool(state.get("bf", false))
+	if downed or knockdown or snapshot_air or Time.get_ticks_msec() >= net_hold_until_msec:
+		net_hold_correction = false
+		net_hold_until_msec = 0
+	elif net_hold_correction:
+		return
 	juggled = bool(state["jug"])
 	float_load = float(state.get("fl", 0.0))
 	float_session = bool(state.get("fs", false))
 	kick_bounce = bool(state.get("kb", false))
+	bounce_pending = bool(state.get("bf", false))
+	victim_float = float(state.get("vf", victim_float))
 	mounted = bool(state["mount"])
 	block_time = float(state["block"])
 	punch_time = float(state["punch"])
@@ -868,9 +1073,105 @@ func apply_net_state(state: Dictionary) -> void:
 	if spin_time <= 0.0:
 		visual.rotation.y = float(state["f"])
 	net_goal = state["p"]
-	if not has_net_goal or global_position.distance_to(net_goal) > 3.5:
+	var gap := global_position.distance_to(net_goal)
+	if not has_net_goal or gap > 8.0:
 		global_position = net_goal
 	has_net_goal = true
+
+func airborne_net() -> bool:
+	return juggled or kick_bounce or bounce_pending
+
+func predict_net_hit(method: String, direction: Vector3) -> void:
+	if not net_puppet or downed or knockdown:
+		return
+	var flat := Vector3(direction.x, 0.0, direction.z)
+	if flat.length_squared() < 0.001:
+		flat = Vector3(-sin(visual.rotation.y), 0.0, -cos(visual.rotation.y))
+	else:
+		flat = flat.normalized()
+	match method:
+		"launch_up":
+			juggled = true
+			kick_bounce = false
+			bounce_pending = false
+			FloatRules.begin_float(self)
+			victim_float = 0.95
+			velocity = flat * 1.4 + Vector3.UP * 6.6
+		"punch_launch":
+			if juggled or kick_bounce:
+				predict_net_hit("punch_from", direction)
+				return
+			juggled = true
+			kick_bounce = false
+			bounce_pending = false
+			FloatRules.begin_float(self)
+			victim_float = 0.9
+			velocity = flat * 2.0 + Vector3.UP * 6.5
+		"kick_from":
+			if juggled or kick_bounce:
+				juggled = false
+				kick_bounce = true
+				bounce_pending = false
+				victim_float = 0.18
+				velocity = flat * 18.0 + Vector3.UP * 2.2
+			else:
+				velocity = flat * 7.5 + Vector3.UP * 0.4
+		"punch_from", "punch_follow":
+			if juggled or kick_bounce:
+				juggled = true
+				velocity.y = maxf(velocity.y, 2.6)
+				victim_float = maxf(victim_float, 0.35)
+			else:
+				velocity.x = flat.x * 3.0
+				velocity.z = flat.z * 3.0
+		"slam_from_pot":
+			if juggled or kick_bounce:
+				juggled = true
+				kick_bounce = false
+				bounce_pending = true
+				victim_float = 0.0
+				velocity = flat * 1.4 + Vector3.DOWN * 16.0
+			else:
+				velocity = Vector3.ZERO
+		"pot_float", "umbrella_spin_from":
+			if juggled and not bounce_pending and not kick_bounce:
+				velocity.y = maxf(velocity.y, 2.4)
+				victim_float = maxf(victim_float, 0.35)
+		"shove_from":
+			if not juggled:
+				velocity = flat * 8.0 + Vector3.UP * 0.6
+		"dash_hit_from":
+			velocity.x = flat.x * 3.0
+			velocity.z = flat.z * 3.0
+	net_hold_correction = true
+	net_hold_until_msec = Time.get_ticks_msec() + 90
+
+func step_puppet_air(delta: float) -> void:
+	if net_pinned or downed or knockdown or not airborne_net():
+		return
+	var gravity := 20.0
+	if kick_bounce:
+		gravity = 16.0
+	elif juggled or bounce_pending:
+		FloatRules.step_float(self, delta)
+		slide_body()
+		if net_hold_correction or not has_net_goal:
+			return
+		var error := net_goal - global_position
+		if error.length() > 8.0:
+			global_position = net_goal
+		elif error.length() > 0.08:
+			global_position += error * minf(1.0, 5.0 * delta)
+		return
+	velocity.y -= gravity * delta
+	slide_body()
+	if net_hold_correction or not has_net_goal:
+		return
+	var error := net_goal - global_position
+	if error.length() > 8.0:
+		global_position = net_goal
+	elif error.length() > 0.08:
+		global_position += error * minf(1.0, 5.0 * delta)
 
 func reset_for_round() -> void:
 	health = max_health
@@ -883,13 +1184,20 @@ func reset_for_round() -> void:
 	chair_ride = false
 	net_pinned = false
 	has_net_goal = false
+	net_hold_correction = false
+	net_hold_until_msec = 0
 	juggled = false
 	bounce_pending = false
 	victim_float = 0.0
+	float_stall = 0.0
+	float_apex = false
+	float_held = false
 	juggle_hits = 0
 	float_load = 0.0
 	float_session = false
 	kick_bounce = false
+	crouching = false
+	head_lock = 0.0
 	stagger_time = 0.0
 	action_lock = 0.0
 	block_time = 0.0
@@ -914,6 +1222,10 @@ func reset_for_round() -> void:
 	banner = ""
 	banner_time = 0.0
 	velocity = Vector3.ZERO
+	drop_from_head(0.0)
+	drop_rider()
+	if capsule != null:
+		apply_crouch_shape()
 	for key in cd.keys():
 		cd[key] = 0.0
 
@@ -956,6 +1268,8 @@ func foe_juggled(reach: float, height_limit: float) -> bool:
 func short_blink() -> void:
 	if downed or knockdown or mounted or dash_time > 0.0 or action_lock > 0.0 or block_time > 0.0 or blink_cooldown > 0.0:
 		return
+	drop_from_head()
+	drop_rider()
 	var direction := facing_direction()
 	var start_position := global_position
 	for step in range(10, 0, -1):
@@ -971,7 +1285,11 @@ func short_blink() -> void:
 	feedback.blink_effect(start_position + Vector3.UP, global_position + Vector3.UP)
 
 func jump() -> void:
-	if downed or knockdown or mounted or dash_time > 0.0 or action_lock > 0.0:
+	if downed or knockdown or mounted or dash_time > 0.0 or action_lock > 0.0 or juggled or kick_bounce:
+		return
+	if head_carrier != null:
+		drop_from_head(0.0)
+		velocity.y = 7.5
 		return
 	if is_on_floor():
 		velocity.y = 7.5
@@ -990,6 +1308,7 @@ func begin_knockdown() -> void:
 	bounce_pending = false
 	victim_float = 0.0
 	stagger_time = 0.0
+	flinch_time = 0.0
 	action_lock = 0.0
 	dash_time = 0.0
 	block_time = 0.0
@@ -1002,6 +1321,8 @@ func begin_knockdown() -> void:
 	mounted = false
 	chair_ride = false
 	seated = false
+	drop_from_head()
+	drop_rider()
 	velocity = Vector3.ZERO
 	FloatRules.end_session(self)
 	feedback.impact(global_position + Vector3.UP * 0.2, false)
@@ -1014,6 +1335,8 @@ func take_hit(attack_name: String = "文件夹") -> void:
 		banner_time = 0.7
 		feedback.play_swing()
 		return
+	drop_from_head()
+	drop_rider()
 	var damage: int = {
 		"文件夹": 12, "锅": 18, "咖啡": 12, "轻拳": 8, "连拳": 8, "补拳": 10,
 		"上勾拳": 16, "前踢": 12, "踢飞": 22, "雨伞": 12, "雨伞挑飞": 20,
@@ -1096,6 +1419,7 @@ func punch_launch(direction: Vector3) -> void:
 	if downed:
 		return
 	FloatRules.start_launch(self)
+	FloatRules.begin_float(self)
 	juggled = true
 	kick_bounce = false
 	stagger_time = 0.0
@@ -1130,6 +1454,7 @@ func launch_up(direction: Vector3) -> void:
 	if downed:
 		return
 	FloatRules.start_launch(self)
+	FloatRules.begin_float(self)
 	juggled = true
 	kick_bounce = false
 	victim_float = 0.95
@@ -1249,6 +1574,7 @@ func end_chair_ride(throw_velocity: Vector3) -> void:
 		airborne = false
 		return
 	FloatRules.add_hit(self)
+	FloatRules.begin_float(self)
 	var mul := FloatRules.lift_mul(self)
 	stagger_time = 0.0
 	juggled = true
@@ -1277,6 +1603,8 @@ func has_pot() -> bool:
 	return loadout[0] == Weapon.POT or loadout[1] == Weapon.POT
 
 func camera_look() -> Vector3:
+	if net_simulated and net_aim.length_squared() > 0.001:
+		return net_aim
 	var cam := camera if camera != null else get_viewport().get_camera_3d()
 	if cam == null:
 		return facing_direction()
@@ -1345,6 +1673,8 @@ func predict_coffee_landing(origin: Vector3, projectile_velocity: Vector3) -> Ve
 	return pos
 
 func aim_direction() -> Vector3:
+	if net_simulated and net_aim.length_squared() > 0.001:
+		return net_aim
 	var cam := camera if camera != null else get_viewport().get_camera_3d()
 	if cam == null:
 		return facing_direction()
@@ -1363,61 +1693,59 @@ func current_speed() -> float:
 	var speed := 10.0 if mounted else move_speed
 	if speed_buff_time > 0.0:
 		speed *= 1.4
+	if crouching:
+		speed *= 0.55
 	return speed
 
-func _physics_process(delta: float) -> void:
+func slide_body() -> void:
+	move_and_slide()
+	FloatRules.slip_off_bodies(self)
+	if head_lock <= 0.0 and head_carrier == null and not FloatRules.launched_air(self):
+		try_mount_head()
+
+func setup_capsule() -> void:
+	capsule_node = $CollisionShape3D
+	capsule = (capsule_node.shape as CapsuleShape3D).duplicate()
+	capsule_node.shape = capsule
+	stand_height = capsule.height
+	stand_shape_y = capsule_node.position.y
+
+func crouch_held() -> bool:
+	if net_simulated:
+		return net_crouch
+	if net_puppet or controls_locked or scripted_drive:
+		return false
+	return Input.is_key_pressed(KEY_CTRL)
+
+func refresh_crouch() -> void:
+	var want := crouch_held()
+	if downed or knockdown or juggled or kick_bounce or bounce_pending or head_carrier != null or mounted or chair_ride:
+		want = false
+	if crouching == want:
+		return
+	crouching = want
+	apply_crouch_shape()
+
+func apply_crouch_shape() -> void:
+	if capsule == null or capsule_node == null:
+		return
+	if crouching:
+		capsule.height = maxf(stand_height * 0.68, capsule.radius * 2.0 + 0.05)
+		capsule_node.position.y = stand_shape_y - (stand_height - capsule.height) * 0.5
+	else:
+		capsule.height = stand_height
+		capsule_node.position.y = stand_shape_y
+
+func launched_air() -> bool:
+	return FloatRules.launched_air(self)
+
+func ride_move_input() -> Vector3:
+	if net_simulated:
+		return net_move
+	if scripted_drive:
+		return scripted_move
 	if net_puppet or controls_locked:
-		return
-	if chair_ride:
-		velocity = Vector3.ZERO
-		return
-	if hit_pause > 0.0:
-		hit_pause = maxf(0.0, hit_pause - delta)
-		velocity = Vector3.ZERO
-		move_and_slide()
-		return
-	if downed or knockdown:
-		velocity.x = 0.0
-		velocity.z = 0.0
-		velocity.y -= 20.0 * delta
-		move_and_slide()
-		return
-	if spin_time > 0.0:
-		velocity.x = 0.0
-		velocity.z = 0.0
-		velocity.y -= 20.0 * delta
-		move_and_slide()
-		return
-	if kick_bounce and dash_time <= 0.0:
-		velocity.y -= 16.0 * delta
-		move_and_slide()
-		if FloatRules.try_kick_wall(self):
-			juggled = true
-			airborne = true
-			victim_float = 0.48 * maxf(FloatRules.lift_mul(self), 0.16)
-		elif is_on_floor() and victim_float <= 0.0:
-			begin_knockdown()
-		return
-	if juggled and dash_time <= 0.0:
-		var gravity := FloatRules.hang_gravity(self) if victim_float > 0.0 and not bounce_pending else 20.0
-		velocity.y -= gravity * delta
-		move_and_slide()
-		if is_on_floor():
-			if bounce_pending:
-				bounce_pending = false
-				FloatRules.add_hit(self)
-				var mul := FloatRules.lift_mul(self)
-				victim_float = 0.4 * maxf(mul, 0.18)
-				velocity.y = 5.0 * maxf(mul, 0.18)
-			elif victim_float <= 0.0:
-				begin_knockdown()
-		return
-	if stagger_time > 0.0 and dash_time <= 0.0:
-		velocity.x = move_toward(velocity.x, 0.0, 10.0 * delta)
-		velocity.z = move_toward(velocity.z, 0.0, 10.0 * delta)
-		velocity.y -= 20.0 * delta
-		move_and_slide()
-		return
+		return Vector3.ZERO
 	var input_vector := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
 	var wasd := Vector2(
 		float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)),
@@ -1425,13 +1753,208 @@ func _physics_process(delta: float) -> void:
 	)
 	if wasd.length_squared() > 0.0:
 		input_vector = wasd.normalized()
+	if camera == null or input_vector.length_squared() <= 0.0:
+		return Vector3.ZERO
+	var right := camera.global_transform.basis.x
+	var forward := -camera.global_transform.basis.z
+	right.y = 0.0
+	forward.y = 0.0
+	if right.length_squared() < 0.001 or forward.length_squared() < 0.001:
+		return Vector3.ZERO
+	return (right.normalized() * input_vector.x + forward.normalized() * -input_vector.y).normalized()
+
+func foot_offset() -> float:
+	return global_position.y - FloatRules.capsule_bottom_y(self)
+
+func stick_to_carrier() -> void:
+	if head_carrier == null or not is_instance_valid(head_carrier):
+		return
+	var stand_y := FloatRules.capsule_top_y(head_carrier) + foot_offset()
+	global_position = Vector3(head_carrier.global_position.x, stand_y, head_carrier.global_position.z)
+	velocity = Vector3.ZERO
+
+func try_mount_head() -> void:
+	if head_lock > 0.0 or head_carrier != null or launched_air() or downed or knockdown:
+		return
+	try_mount_dummy_head()
+	if head_carrier != null or not is_on_floor():
+		return
+	for i in get_slide_collision_count():
+		var hit := get_slide_collision(i)
+		if hit.get_normal().y < 0.65:
+			continue
+		var other := hit.get_collider()
+		if other is Node and is_head_platform(other):
+			mount_head(other)
+			return
+	try_mount_dummy_head()
+
+func is_head_platform(other: Node) -> bool:
+	if other == self:
+		return false
+	if not other.is_in_group("player") and not other.is_in_group("fighters") and not other.is_in_group("training_dummies") and not other.is_in_group("hall_dummies"):
+		return false
+	if other.get("downed") or other.get("knockdown") or other.get("juggled") or other.get("kick_bounce"):
+		return false
+	if other.get("head_carrier") != null:
+		return false
+	var rider = other.get("head_rider")
+	return rider == null or not is_instance_valid(rider) or rider == self
+
+func try_mount_dummy_head() -> void:
+	if velocity.y > 0.35:
+		return
+	var feet := FloatRules.capsule_bottom_y(self)
+	for group_name in ["training_dummies", "hall_dummies"]:
+		for dummy in get_tree().get_nodes_in_group(group_name):
+			if not dummy is Node3D or not is_head_platform(dummy):
+				continue
+			var body := dummy as Node3D
+			var flat := global_position - body.global_position
+			flat.y = 0.0
+			if flat.length() > 0.72:
+				continue
+			var top := FloatRules.capsule_top_y(body)
+			if feet < top - 0.62 or feet > top + 0.2:
+				continue
+			mount_head(body)
+			return
+
+func mount_head(carrier: Node) -> void:
+	head_carrier = carrier
+	carrier.head_rider = self
+	if carrier is CollisionObject3D:
+		add_collision_exception_with(carrier)
+		(carrier as CollisionObject3D).add_collision_exception_with(self)
+	stick_to_carrier()
+
+func drop_from_head(hop := 0.8) -> void:
+	if head_carrier == null:
+		return
+	var carrier := head_carrier
+	head_carrier = null
+	head_lock = 0.28
+	if is_instance_valid(carrier):
+		if carrier.get("head_rider") == self:
+			carrier.head_rider = null
+		if carrier is CollisionObject3D:
+			remove_collision_exception_with(carrier)
+			(carrier as CollisionObject3D).remove_collision_exception_with(self)
+	velocity.y = hop
+
+func drop_rider() -> void:
+	if head_rider == null or not is_instance_valid(head_rider):
+		head_rider = null
+		return
+	if head_rider.has_method("drop_from_head"):
+		head_rider.drop_from_head()
+	else:
+		head_rider = null
+
+func place_rider() -> void:
+	if head_rider == null or not is_instance_valid(head_rider):
+		head_rider = null
+		return
+	if head_rider.get("head_carrier") != self:
+		head_rider = null
+		return
+	if head_rider.has_method("stick_to_carrier"):
+		head_rider.stick_to_carrier()
+
+func _physics_process(delta: float) -> void:
+	if net_puppet and not net_simulated:
+		return
+	if controls_locked and not net_simulated:
+		return
+	head_lock = maxf(0.0, head_lock - delta)
+	refresh_crouch()
+	if chair_ride:
+		drop_rider()
+		velocity = Vector3.ZERO
+		return
+	if head_carrier != null and (not is_instance_valid(head_carrier) or launched_air() or downed or knockdown):
+		drop_from_head()
+	if head_carrier != null and ride_move_input().length_squared() > 0.01:
+		drop_from_head(0.2)
+	if head_carrier != null:
+		stick_to_carrier()
+		if not net_simulated and not scripted_drive:
+			var look := aim_direction()
+			if look.length_squared() > 0.001:
+				face_to(look)
+		return
+	if hit_pause > 0.0:
+		hit_pause = maxf(0.0, hit_pause - delta)
+		velocity = Vector3.ZERO
+		slide_body()
+		return
+	if downed or knockdown:
+		drop_rider()
+		velocity.x = 0.0
+		velocity.z = 0.0
+		velocity.y -= 20.0 * delta
+		slide_body()
+		return
+	if spin_time > 0.0:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		velocity.y -= 20.0 * delta
+		slide_body()
+		return
+	if kick_bounce and dash_time <= 0.0:
+		velocity.y -= 16.0 * delta
+		slide_body()
+		if FloatRules.try_kick_wall(self):
+			juggled = true
+			airborne = true
+			FloatRules.begin_float(self)
+			victim_float = 0.48 * maxf(FloatRules.lift_mul(self), 0.16)
+		elif FloatRules.on_arena_floor(self) and victim_float <= 0.0:
+			begin_knockdown()
+		return
+	if juggled and dash_time <= 0.0:
+		FloatRules.step_float(self, delta)
+		slide_body()
+		if FloatRules.on_arena_floor(self):
+			if bounce_pending:
+				bounce_pending = false
+				FloatRules.add_hit(self)
+				FloatRules.begin_float(self)
+				var mul := FloatRules.lift_mul(self)
+				victim_float = 0.4 * maxf(mul, 0.18)
+				velocity.y = 5.0 * maxf(mul, 0.18)
+			elif float_apex and float_stall <= 0.0 and velocity.y <= 0.2:
+				begin_knockdown()
+		return
+	if stagger_time > 0.0 and dash_time <= 0.0:
+		velocity.x = move_toward(velocity.x, 0.0, 10.0 * delta)
+		velocity.z = move_toward(velocity.z, 0.0, 10.0 * delta)
+		velocity.y -= 20.0 * delta
+		slide_body()
+		return
 	var direction := Vector3.ZERO
-	if camera and input_vector.length_squared() > 0.0:
-		var right := camera.global_transform.basis.x
-		var forward := -camera.global_transform.basis.z
-		right.y = 0.0
-		forward.y = 0.0
-		direction = (right.normalized() * input_vector.x + forward.normalized() * -input_vector.y).normalized()
+	if net_simulated:
+		direction = net_move
+		if dash_time <= 0.0 and forced_facing <= 0.0 and net_aim.length_squared() > 0.001:
+			face_to(net_aim)
+	elif scripted_drive:
+		direction = scripted_move
+		if dash_time <= 0.0 and forced_facing <= 0.0 and scripted_aim.length_squared() > 0.001:
+			face_to(scripted_aim)
+	else:
+		var input_vector := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+		var wasd := Vector2(
+			float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)),
+			float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W))
+		)
+		if wasd.length_squared() > 0.0:
+			input_vector = wasd.normalized()
+		if camera and input_vector.length_squared() > 0.0:
+			var right := camera.global_transform.basis.x
+			var forward := -camera.global_transform.basis.z
+			right.y = 0.0
+			forward.y = 0.0
+			direction = (right.normalized() * input_vector.x + forward.normalized() * -input_vector.y).normalized()
 	var target_velocity := direction * current_speed()
 	var was_dashing := dash_time > 0.0
 	if was_dashing:
@@ -1447,13 +1970,14 @@ func _physics_process(delta: float) -> void:
 		velocity.x = target_velocity.x
 		velocity.z = target_velocity.z
 	velocity.y -= 20.0 * delta
-	move_and_slide()
+	slide_body()
 	if was_dashing:
 		resolve_dash_hits()
 	elif mounted:
 		push_nearby()
-	elif direction.length_squared() > 0.01 and forced_facing <= 0.0:
+	elif not net_simulated and direction.length_squared() > 0.01 and forced_facing <= 0.0:
 		visual.rotation.y = lerp_angle(visual.rotation.y, atan2(-direction.x, -direction.z), 12.0 * delta)
+	place_rider()
 
 func resolve_dash_hits() -> void:
 	for target in get_tree().get_nodes_in_group("combat_targets"):
@@ -1520,13 +2044,14 @@ func skill_slots() -> Array:
 	var punch_name := "挥拳"
 	var punch_hot := false
 	var punch_remain := float(cd["punch"])
-	if punch_chain > 0.0:
+	if foe_juggled(2.2, 3.4):
+		punch_name = "补拳"
+		punch_hot = true
+		punch_remain = 0.0
+	elif punch_chain > 0.0:
 		punch_name = "上勾" if punch_index >= 1 else "连拳"
 		punch_hot = true
 		punch_remain = 0.0
-	elif foe_juggled(2.2, 3.4):
-		punch_name = "补拳"
-		punch_hot = true
 	var punch_slot := pack_slot("左键", punch_name, punch_remain, CD_PUNCH, punch_hot)
 	var kick_slot := pack_slot("右键", "前踢", float(cd["kick"]), CD_KICK, foe_juggled(2.6, 3.5))
 	var primary: Array = weapon_skill_pair(loadout[0], "Q", "E")
@@ -1583,6 +2108,10 @@ func status_text() -> String:
 		parts.append("倒地 %.1f" % maxf(revive_time, 0.0))
 	elif knockdown:
 		parts.append("倒地保护 %.1f" % maxf(knockdown_time, 0.0))
+	if crouching:
+		parts.append("下蹲")
+	if head_carrier != null:
+		parts.append("站在头上")
 	if speed_buff_time > 0.0:
 		parts.append("加速 %.1f" % speed_buff_time)
 	if block_time > 0.0:

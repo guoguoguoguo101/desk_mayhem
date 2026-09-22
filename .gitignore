@@ -6,4 +6,5 @@ _mechanics_test.gd.uid
 _network_test.gd
 _network_test.gd.uid
 _run_network_test.py
+test_output/
 _socket_probe.py
