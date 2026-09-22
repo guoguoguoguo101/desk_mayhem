@@ -1,9 +1,12 @@
-[gd_scene load_steps=103 format=3]
+[gd_scene load_steps=106 format=3]
 
 [ext_resource type="Script" path="res://player.gd" id="1"]
 [ext_resource type="Script" path="res://follow_camera.gd" id="2"]
 [ext_resource type="Script" path="res://dummy.gd" id="3"]
 [ext_resource type="Script" path="res://combat_feedback.gd" id="4"]
+[ext_resource type="Script" path="res://combat_hud.gd" id="5"]
+[ext_resource type="Script" path="res://network_manager.gd" id="6"]
+[ext_resource type="Script" path="res://duel_hall.gd" id="7"]
 
 [sub_resource type="BoxMesh" id="1"]
 size = Vector3(110, 0.3, 80)
@@ -423,7 +426,7 @@ position = Vector3(0, 1.25, -40)
 mesh = SubResource("4")
 surface_material_override/0 = SubResource("5")
 
-[node name="NorthWallBody" type="StaticBody3D" parent="Architecture"]
+[node name="NorthWallBody" type="StaticBody3D" parent="Architecture" groups=["arena_walls"]]
 position = Vector3(0, 1.25, -40)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Architecture/NorthWallBody"]
@@ -434,7 +437,7 @@ position = Vector3(0, 1.25, 40)
 mesh = SubResource("4")
 surface_material_override/0 = SubResource("5")
 
-[node name="SouthWallBody" type="StaticBody3D" parent="Architecture"]
+[node name="SouthWallBody" type="StaticBody3D" parent="Architecture" groups=["arena_walls"]]
 position = Vector3(0, 1.25, 40)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Architecture/SouthWallBody"]
@@ -445,7 +448,7 @@ position = Vector3(-55, 1.25, 0)
 mesh = SubResource("7")
 surface_material_override/0 = SubResource("5")
 
-[node name="WestWallBody" type="StaticBody3D" parent="Architecture"]
+[node name="WestWallBody" type="StaticBody3D" parent="Architecture" groups=["arena_walls"]]
 position = Vector3(-55, 1.25, 0)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Architecture/WestWallBody"]
@@ -456,7 +459,7 @@ position = Vector3(55, 1.25, 0)
 mesh = SubResource("7")
 surface_material_override/0 = SubResource("5")
 
-[node name="EastWallBody" type="StaticBody3D" parent="Architecture"]
+[node name="EastWallBody" type="StaticBody3D" parent="Architecture" groups=["arena_walls"]]
 position = Vector3(55, 1.25, 0)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Architecture/EastWallBody"]
@@ -2264,7 +2267,7 @@ billboard = 1
 modulate = Color(1, 0.9, 0.56, 1)
 
 [node name="HUD" type="CanvasLayer" parent="."]
-
+script = ExtResource("5")
 
 [node name="Instructions" type="Label" parent="HUD"]
 offset_left = 24.0
@@ -2273,3 +2276,9 @@ offset_right = 650.0
 offset_bottom = 80.0
 theme_override_font_sizes/font_size = 20
 text = "WASD 移动  |  鼠标转视角  |  Shift 闪现  |  空格跳跃\n左键文件夹  |  右键咖啡  |  Q 冲刺→Q 挑飞  |  F 踢  |  E 椅子"
+
+[node name="DuelHall" type="Node3D" parent="."]
+script = ExtResource("7")
+
+[node name="Network" type="Node" parent="." groups=["network"]]
+script = ExtResource("6")

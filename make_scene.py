@@ -236,14 +236,14 @@ for index, (x, z) in enumerate([
         'modulate': 'Color(1, 0.9, 0.56, 1)',
     })
 
-node('HUD', 'CanvasLayer')
+node('HUD', 'CanvasLayer', props={'script': 'ExtResource("5")'})
 node('Instructions', 'Label', 'HUD', {
     'offset_left': '24.0',
     'offset_top': '20.0',
-    'offset_right': '650.0',
-    'offset_bottom': '80.0',
-    'theme_override_font_sizes/font_size': '20',
-    'text': '"WASD 移动  |  鼠标转视角  |  Shift 闪现  |  空格跳跃\\n左键文件夹  |  右键咖啡  |  Q 冲刺→Q 挑飞  |  F 踢  |  E 椅子"',
+    'offset_right': '980.0',
+    'offset_bottom': '130.0',
+    'theme_override_font_sizes/font_size': '18',
+    'text': '"WASD 移动，鼠标转镜头，Shift 闪现，空格跳\\n左键轻拳，右键前踢。Tab 选定武器槽，1-4 装进该槽，可同时带两件\\nQ/E 是武器 A，F/C 是武器 B。撑伞时按冲锋会收伞并冲出"',
 })
 env = resource('Environment', {
     'background_mode': '1',
@@ -255,6 +255,6 @@ env = resource('Environment', {
 })
 resources[-1] = resources[-1].replace(f'id="{env}"', 'id="ENV"')
 
-header = '[gd_scene load_steps=' + str(len(resources)+5) + ' format=3]\n\n[ext_resource type="Script" path="res://player.gd" id="1"]\n[ext_resource type="Script" path="res://follow_camera.gd" id="2"]\n[ext_resource type="Script" path="res://dummy.gd" id="3"]\n[ext_resource type="Script" path="res://combat_feedback.gd" id="4"]'
+header = '[gd_scene load_steps=' + str(len(resources)+6) + ' format=3]\n\n[ext_resource type="Script" path="res://player.gd" id="1"]\n[ext_resource type="Script" path="res://follow_camera.gd" id="2"]\n[ext_resource type="Script" path="res://dummy.gd" id="3"]\n[ext_resource type="Script" path="res://combat_feedback.gd" id="4"]\n[ext_resource type="Script" path="res://combat_hud.gd" id="5"]'
 Path('office_demo.tscn').write_text(header + '\n\n' + '\n\n'.join(resources) + '\n\n' + '\n\n'.join(nodes) + '\n', encoding='utf-8')
 print('Generated office_demo.tscn with', len(nodes), 'nodes')
