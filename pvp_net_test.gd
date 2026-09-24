@@ -12,6 +12,7 @@ var saw_snapshots := false
 var asked_jump := false
 var sent_hit := false
 var hit_at := 0
+var saw_combat_event := false
 var finished := false
 
 func _ready() -> void:
@@ -75,6 +76,9 @@ func step_join(net: Node, now: int) -> void:
 		saw_jump = true
 		note("本机跳起 y=%.2f" % player.global_position.y)
 	if int(player.health) < int(player.max_health) and bool(player.juggled):
+		var event = net.last_confirmed_combat_event
+		if event and int(event.victim_peer) == multiplayer.get_unique_id() and str(event.effect_method) == "launch_up":
+			saw_combat_event = true
 		note("收到击飞 hp=%d" % int(player.health))
 		if not saw_move:
 			fail("没有观察到本机移动")
@@ -82,6 +86,8 @@ func step_join(net: Node, now: int) -> void:
 			fail("没有观察到本机跳跃")
 		if not saw_snapshots:
 			fail("对手位置没有插值缓冲")
+		if not saw_combat_event:
+			fail("没有收到服务器确认的 CombatEvent")
 		finish()
 
 func step_host(net: Node, now: int) -> void:
@@ -119,6 +125,11 @@ func step_host(net: Node, now: int) -> void:
 		net.host_apply_hit(net.local_player, foe, "launch_up", dir, "")
 		hit_at = now
 		note("判定击飞 hp=%d vy=%.2f jug=%s gap=%.2f" % [int(foe.health), foe.velocity.y, str(bool(foe.juggled)), gap])
+		var event = net.last_confirmed_combat_event
+		if event == null or int(event.victim_peer) != int(foe.owner_peer) or str(event.effect_method) != "launch_up":
+			fail("主机没有生成击飞 CombatEvent")
+			finish()
+			return
 		if int(foe.health) >= 400 or not bool(foe.juggled) or foe.velocity.y < 2.0:
 			fail("击飞结果不一致 hp=%d jug=%s vy=%.2f" % [int(foe.health), str(bool(foe.juggled)), foe.velocity.y])
 			finish()

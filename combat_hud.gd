@@ -179,6 +179,7 @@ func make_slot(parent: Node, size: Vector2) -> Dictionary:
 	box.add_child(name_label)
 	box.add_child(cd_label)
 	return {
+		"panel": panel,
 		"style": style,
 		"icon": icon,
 		"overlay": overlay,
@@ -231,6 +232,14 @@ func _process(_delta: float) -> void:
 	for i in equip_ui.size():
 		apply_slot(equip_ui[i], weapons[i])
 	var skills: Array = player.skill_slots()
+	var network := get_node_or_null("../Network")
+	# The dedicated test room uses fixed equipment, but always shows its aim reference.
+	var dedicated: bool = network != null and network.using_battle_server()
+	instructions.text = "WASD 移动 · Shift 闪现 · 空格 跳跃 · Q 冲锋/挑飞 · E 旋伞 · F 回旋锅/召回 · C 扣锅" if dedicated else "WASD 移动 · Shift 闪现 · 空格 跳跃 · Tab 换槽 / 1–4 装备"
+	if dedicated:
+		crosshair.visible = network.phase == "play" and not player.downed
+	for item in equip_ui:
+		item["panel"].visible = not dedicated
 	for i in skill_ui.size():
 		apply_slot(skill_ui[i], skills[i])
 

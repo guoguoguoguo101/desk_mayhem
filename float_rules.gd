@@ -4,10 +4,14 @@ const KNOCKDOWN_TIME := 0.8
 const AIR_GRAVITY := 16.5
 const PUNCH_LAUNCH_SPEED := 9.2
 const UMBRELLA_LAUNCH_SPEED := 9.3
+const AIR_HIT_HEIGHT := 4.8
+const AIR_HIT_REACH := 0.45
 const PUNCH_HOLD := 0
+const PUNCH_HOLD_Y := -0.35
 const SPIN_LIFT := 1
 const SPIN_LIFT_SPEED := 7.0
 const POT_LIFT := 2
+const POT_LIFT_SPEED := 3.0
 
 static func start_launch(body) -> void:
 	if not body.float_session:
@@ -62,13 +66,14 @@ static func step_float(body, delta: float) -> void:
 
 static func extend(body, kind: int) -> void:
 	if kind == PUNCH_HOLD:
-		if body.air_punch_hold_used:
-			return
-		body.air_punch_hold_used = true
-		body.velocity.y = maxf(body.velocity.y, -0.35)
+		body.velocity.y = maxf(body.velocity.y, PUNCH_HOLD_Y)
+		body.float_apex = false
 		return
-	var lift := SPIN_LIFT_SPEED if kind == SPIN_LIFT else 3.0
-	body.velocity.y = maxf(body.velocity.y, lift)
+	if kind == POT_LIFT:
+		body.velocity.y = maxf(body.velocity.y, POT_LIFT_SPEED)
+		body.float_apex = false
+		return
+	body.velocity.y = maxf(body.velocity.y, SPIN_LIFT_SPEED)
 	body.float_apex = false
 
 static func try_kick_wall(body: CharacterBody3D) -> bool:

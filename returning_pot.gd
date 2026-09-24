@@ -5,6 +5,7 @@ const OUT_SPEED := 14.0
 const RETURN_SPEED := 16.0
 const RECALL_SPEED := 22.0
 const FLARE = preload("res://assets/kenney_particles/flare_01.png")
+const HitIntentData = preload("res://combat/hit_intent.gd")
 var thrower: Node3D
 var direction := Vector3.FORWARD
 var returning := false
@@ -141,6 +142,11 @@ func check_hits(from: Vector3, to: Vector3) -> void:
 			push = thrower.global_position - target.global_position
 			push.y = 0.0
 			push = push.normalized() * minf(8.0, maxf(0.0, push.length() - 0.7) * 4.0)
+		if not cosmetic:
+			thrower.last_hit_intent = HitIntentData.segment(
+				"returning_pot_back" if returning else "returning_pot_out",
+				thrower.get_instance_id(), from, to, Engine.get_physics_frames()
+			)
 		if not cosmetic and thrower.connect_hit(target, "pot_return" if returning else "pot_outbound", push):
 			thrower.register_combo(1)
 		flash(center, 1.35)

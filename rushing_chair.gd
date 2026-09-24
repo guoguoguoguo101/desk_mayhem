@@ -5,6 +5,7 @@ var speed := 12.0
 var remain := 9.0
 var passenger: Node
 var seat: Node3D
+var thrower: Node3D
 var grab_spent := false
 var cosmetic := false
 
@@ -16,7 +17,8 @@ func _ready() -> void:
 	add_child(seat)
 	build_visual()
 
-func launch(dir: Vector3) -> void:
+func launch(owner: Node3D, dir: Vector3) -> void:
+	thrower = owner
 	direction = dir
 	direction.y = 0.0
 	if direction.length_squared() < 0.001:
@@ -73,7 +75,7 @@ func _physics_process(delta: float) -> void:
 		finish(false)
 
 func try_grab() -> void:
-	var attacker := get_tree().get_first_node_in_group("player")
+	var attacker := thrower
 	for target in get_tree().get_nodes_in_group("combat_targets"):
 		if target.get("downed") or target.get("knockdown") or target.get("seated"):
 			continue
@@ -85,13 +87,10 @@ func try_grab() -> void:
 			continue
 		if to_target.length() > 0.2 and to_target.normalized().dot(direction) <= 0.0:
 			continue
-		if target.get("net_puppet"):
-			if attacker == null or not attacker.has_method("connect_hit"):
+		var net := get_tree().get_first_node_in_group("network")
+		if net and net.in_match() and net.has_method("host_apply_chair_control"):
+			if attacker == null or not net.host_apply_chair_control(attacker, target, "grab", seat.global_position, direction):
 				continue
-			if not attacker.connect_hit(target, "begin_chair_ride", direction):
-				continue
-			target.seated = true
-			target.net_pinned = true
 			passenger = target
 			grab_spent = true
 			return
@@ -125,18 +124,15 @@ func obstacle_kind(distance: float) -> int:
 
 func finish(hit_arena_wall: bool) -> void:
 	var pop := -direction * 2.4 + Vector3.UP * 5.4
-	if passenger and is_instance_valid(passenger) and passenger.get("net_puppet"):
-		passenger.seated = false
-		passenger.net_pinned = false
-		var attacker := get_tree().get_first_node_in_group("player")
-		if attacker and attacker.has_method("connect_hit"):
-			var method := "end_chair_ride" if hit_arena_wall else "drop_from_chair"
-			attacker.connect_hit(passenger, method, pop if hit_arena_wall else Vector3.ZERO)
-	elif passenger and is_instance_valid(passenger):
-		if hit_arena_wall and passenger.has_method("wall_pop_from_chair"):
-			passenger.wall_pop_from_chair(pop)
-		elif passenger.has_method("drop_from_chair"):
-			passenger.drop_from_chair(Vector3.ZERO)
-		elif passenger.has_method("release_seat"):
-			passenger.release_seat(Vector3.ZERO)
+	if passenger and is_instance_valid(passenger):
+		var net := get_tree().get_first_node_in_group("network")
+		if net and net.in_match() and net.has_method("host_apply_chair_control"):
+			net.host_apply_chair_control(thrower, passenger, "throw" if hit_arena_wall else "release", passenger.global_position, pop if hit_arena_wall else Vector3.ZERO)
+		else:
+			if hit_arena_wall and passenger.has_method("wall_pop_from_chair"):
+				passenger.wall_pop_from_chair(pop)
+			elif passenger.has_method("drop_from_chair"):
+				passenger.drop_from_chair(Vector3.ZERO)
+			elif passenger.has_method("release_seat"):
+				passenger.release_seat(Vector3.ZERO)
 	queue_free()

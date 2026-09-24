@@ -39,6 +39,12 @@ const NAMED_HITS := {
 
 const THROWN_ITEM := preload("res://thrown_item.gd")
 const RUSHING_CHAIR := preload("res://rushing_chair.gd")
+const HitDetection := preload("res://combat/hit_detector.gd")
+const CombatEventData := preload("res://combat/combat_event.gd")
+const ChairControlEventData := preload("res://combat/chair_control_event.gd")
+const ServerRoomConfigData := preload("res://server_room_config.gd")
+const BattleClientSessionData := preload("res://client/battle_client_session.gd")
+const CLIENT_ACTIONS := {"punch": true, "kick": true, "skill_a0": true, "skill_a1": true, "skill_b0": true, "skill_b1": true, "blink": true, "jump": true}
 
 var phase := "menu"
 var room_kind := "solo"
@@ -59,6 +65,7 @@ var kills := {}
 var deaths := {}
 var last_kill_line := ""
 var last_kill_until := 0
+var battle_server_scores: Array = []
 var net_debug: Label
 var action_seq := 0
 var seen_action := {}
@@ -70,18 +77,34 @@ var snapshots_sent := 0
 var snapshots_seen := 0
 var last_action_name := ""
 var last_hit_line := ""
+var combat_event_seq := 0
+var seen_combat_event := 0
+var last_confirmed_combat_event
+var chair_control_seq := 0
+var seen_chair_control_event := 0
+var last_chair_control_event
+var dedicated_server := false
+var headless_battle_server := false
+var headless_battle_requested := false
+var dedicated_room_config
 
 @onready var local_player: CharacterBody3D = get_node("../Player")
 @onready var feedback: Node3D = get_node("../CombatFeedback")
 
 func _ready() -> void:
+	# server_main.tscn inherits OfficeDemo. Keep the Network node identical on
+	# both ends: Godot validates RPC tables using the node path and RPC setup.
+	dedicated_server = dedicated_server or bool(get_parent().get_meta("dedicated_server", false)) or "--dedicated-server" in OS.get_cmdline_user_args()
+	headless_battle_requested = "--battle-server" in OS.get_cmdline_user_args()
 	add_to_group("network")
 	home_spawn = local_player.global_position
 	reset_slots()
-	build_lobby()
-	build_match_label()
 	multiplayer.peer_connected.connect(on_peer_connected)
 	multiplayer.peer_disconnected.connect(on_peer_disconnected)
+	if dedicated_server:
+		call_deferred("start_dedicated")
+	build_lobby()
+	build_match_label()
 	multiplayer.connected_to_server.connect(on_connected_to_server)
 	multiplayer.connection_failed.connect(on_connection_failed)
 	multiplayer.server_disconnected.connect(on_server_disconnected)
@@ -92,6 +115,104 @@ func _ready() -> void:
 		var tester: Node = load("res://pvp_net_test.gd").new()
 		tester.name = "PvpNetTest"
 		add_child(tester)
+	if "--dedicated-join-smoke" in OS.get_cmdline_user_args():
+		var dedicated_tester: Node = load("res://tests/dedicated_join_smoke.gd").new()
+		dedicated_tester.name = "DedicatedJoinSmoke"
+		add_child(dedicated_tester)
+	if "--battle-client-smoke" in OS.get_cmdline_user_args():
+		var battle_tester: Node = load("res://tests/battle_game_client_smoke.gd").new()
+		battle_tester.name = "BattleGameClientSmoke"
+		add_child(battle_tester)
+	if "--battle-combo-smoke" in OS.get_cmdline_user_args():
+		var combo_tester: Node = load("res://tests/battle_network_combo.gd").new()
+		add_child(combo_tester)
+	if headless_battle_requested:
+		call_deferred("queue_headless_battle_start")
+
+func queue_headless_battle_start() -> void:
+	# Wait until every inherited scene node has completed _ready(). The existing
+	# listen-server test starts one idle turn later as well; opening ENet while
+	# this Network node is still registering with SceneMultiplayer leaves peers
+	# stuck in the connection phase on the headless route.
+	await get_tree().process_frame
+	start_headless_battle()
+
+
+
+
+func start_headless_battle() -> void:
+	if dedicated_server or headless_battle_server:
+		return
+	dedicated_room_config = ServerRoomConfigData.new()
+	session_port = dedicated_port()
+	# This follows the exact, already-tested host startup lifecycle. Afterwards
+	# the temporary host avatar is removed from combat and from the roster.
+	start_hall()
+	if multiplayer.multiplayer_peer == null:
+		push_error("Battle server could not listen on %d." % dedicated_port())
+		return
+	if "--battle-server-probe" in OS.get_cmdline_user_args():
+		print("BATTLE_SERVER probe uses the normal host roster")
+		return
+	headless_battle_server = true
+	reset_slots()
+	local_player.visible = false
+	local_player.controls_locked = true
+	local_player.remove_from_group("player")
+	local_player.remove_from_group("fighters")
+	local_player.remove_from_group("combat_targets")
+	set_training(false)
+	var hall := get_parent().get_node_or_null("DuelHall")
+	if hall and hall.has_method("show_hall"):
+		hall.show_hall()
+	if hall and hall.has_method("clear_dummies"):
+		hall.clear_dummies()
+	print("BATTLE_SERVER room=%s mode=%s active=%d reserved=%d port=%d" % [dedicated_room_config.room_id, dedicated_room_config.mode, dedicated_room_config.active_capacity, ServerRoomConfigData.RESERVED_MAX_PLAYERS, dedicated_port()])
+
+func start_dedicated() -> void:
+	if not dedicated_server:
+		return
+	dedicated_room_config = ServerRoomConfigData.new()
+	# Finish bootstrap before reusing the ordinary host startup path.
+	dedicated_server = false
+	# Reuse the already verified ENet boot sequence from the listen-server
+	# path. The next block immediately removes that temporary local seat, so
+	# only connected peers become fighters.
+	session_port = dedicated_port()
+	start_hall()
+	if multiplayer.multiplayer_peer == null:
+		push_error("Dedicated battle server could not listen on %d." % dedicated_port())
+		return
+	if "--dedicated-host-probe" in OS.get_cmdline_user_args():
+		print("BATTLE_SERVER probe uses the normal host roster")
+		return
+	reset_slots()
+	local_player.visible = false
+	local_player.controls_locked = true
+	local_player.remove_from_group("player")
+	local_player.remove_from_group("fighters")
+	local_player.remove_from_group("combat_targets")
+	# Keep the inherited character node alive as a neutral template. Its scene
+	# children also host setup used by the current transitional network scene.
+	# It is invisible and has no combat groups, so it cannot participate.
+	local_player.controls_locked = true
+	set_training(false)
+	var hall := get_parent().get_node_or_null("DuelHall")
+	if hall and hall.has_method("show_hall"):
+		hall.show_hall()
+	if hall and hall.has_method("clear_dummies"):
+		hall.clear_dummies()
+	# The shared Network node must keep the same normal multiplayer lifecycle
+	# as the client scene. From here on only this flag controls server-only
+	# presentation/roster behavior; `dedicated_server` was a bootstrap marker.
+	headless_battle_server = true
+	print("BATTLE_SERVER room=%s mode=%s active=%d reserved=%d port=%d" % [dedicated_room_config.room_id, dedicated_room_config.mode, dedicated_room_config.active_capacity, ServerRoomConfigData.RESERVED_MAX_PLAYERS, dedicated_port()])
+
+func dedicated_port() -> int:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--port="):
+			return maxi(1, int(arg.trim_prefix("--port=")))
+	return PORT
 
 func pvp_test_role() -> String:
 	for arg in OS.get_cmdline_user_args():
@@ -104,6 +225,9 @@ func has_menu_open() -> bool:
 
 func in_match() -> bool:
 	return phase == "play" and room_kind != "solo"
+
+func using_battle_server() -> bool:
+	return get_node_or_null("BattleClientSession") != null
 
 func capacity_of(kind: String) -> int:
 	if kind == ROOM_TEAMS or kind == ROOM_FFA:
@@ -161,6 +285,7 @@ func build_lobby() -> void:
 	style_button(host, Color("ab6855"))
 	box.add_child(host)
 	address_input = LineEdit.new()
+	address_input.text = "127.0.0.1"
 	address_input.placeholder_text = "同事主机的 IP，例如 192.168.1.20"
 	address_input.custom_minimum_size = Vector2(0, 40)
 	style_line(address_input)
@@ -170,6 +295,11 @@ func build_lobby() -> void:
 	join.pressed.connect(start_join)
 	style_button(join, Color("ab6855"))
 	box.add_child(join)
+	var dedicated_join := Button.new()
+	dedicated_join.text = "加入独立测试战斗服"
+	dedicated_join.pressed.connect(start_battle_client)
+	style_button(dedicated_join, Color("5a7d42"))
+	box.add_child(dedicated_join)
 	lobby_status = body_label("")
 	box.add_child(lobby_status)
 	refresh_lobby_status("同一 Wi-Fi 或网线。连不上时，允许游戏通过 Windows 防火墙，端口 %d。" % PORT)
@@ -320,6 +450,26 @@ func start_join() -> void:
 	phase = "joining"
 	refresh_lobby_status("正在连接 %s …" % address)
 
+func start_battle_client() -> void:
+	if phase == "joining":
+		return
+	var address := address_input.text.strip_edges()
+	if address.is_empty():
+		refresh_lobby_status("先填独立战斗服的 IP。")
+		return
+	close_peer()
+	var session := BattleClientSessionData.new()
+	session.name = "BattleClientSession"
+	session.manager = self
+	add_child(session)
+	var error := session.join(address, session_port)
+	if error != OK:
+		session.queue_free()
+		refresh_lobby_status("独立战斗服连接创建失败，请检查 IP。")
+		return
+	phase = "joining"
+	refresh_lobby_status("正在连接独立战斗服 %s …" % address)
+
 func begin_play(slot: int, networked: bool) -> void:
 	phase = "play"
 	lobby.hide()
@@ -334,7 +484,7 @@ func begin_play(slot: int, networked: bool) -> void:
 	else:
 		local_player.team_id = -1
 	local_player.slot_index = slot
-	local_player.owner_peer = multiplayer.get_unique_id() if networked else 0
+	local_player.owner_peer = (slot + 1 if using_battle_server() else multiplayer.get_unique_id()) if networked else 0
 	local_player.max_health = 1000 if not networked else 400
 	clear_scores()
 	local_player.reset_for_round()
@@ -360,6 +510,8 @@ func look_at_partner(slot: int) -> void:
 	local_player.face_to(direction)
 
 func on_peer_connected(peer_id: int) -> void:
+	if headless_battle_server:
+		print("BATTLE_SERVER peer_connected=%d phase=%s room=%s" % [peer_id, phase, room_kind])
 	if closing or not multiplayer.is_server() or not in_match():
 		return
 	if puppet_for(peer_id):
@@ -372,6 +524,8 @@ func on_peer_connected(peer_id: int) -> void:
 	var team := int(slots[slot]["team"])
 	spawn_puppet(peer_id, slot, team)
 	rpc_id(peer_id, "enter_room", slot, room_kind, roster())
+	if dedicated_server:
+		print("BATTLE_SERVER admitted peer=%d slot=%d" % [peer_id, slot])
 	rpc_id(peer_id, "sync_scores", score_payload())
 	var hall := get_parent().get_node_or_null("DuelHall")
 	if hall and hall.has_method("capture_dummies"):
@@ -406,6 +560,8 @@ func roster() -> Array:
 
 func on_connected_to_server() -> void:
 	phase = "joining"
+	if "--dedicated-join-smoke" in OS.get_cmdline_user_args():
+		print("DEDICATED_JOIN_SMOKE connected")
 
 func on_connection_failed() -> void:
 	if closing:
@@ -443,6 +599,8 @@ func enter_room(slot: int, kind: String, members: Array) -> void:
 			continue
 		spawn_puppet(int(entry["peer"]), int(entry["slot"]), int(entry["team"]))
 	begin_play(slot, true)
+	if "--dedicated-join-smoke" in OS.get_cmdline_user_args():
+		print("DEDICATED_JOIN_SMOKE entered slot=%d" % slot)
 
 @rpc("authority", "call_remote", "reliable")
 func spawn_peer(peer_id: int, slot: int, team: int) -> void:
@@ -487,7 +645,7 @@ func spawn_puppet(peer_id: int, slot: int, team: int) -> void:
 	get_parent().add_child(puppet)
 	puppet.global_position = SPAWNS[slot]
 	puppet.force_update_transform()
-	puppet.net_simulated = multiplayer.is_server()
+	puppet.net_simulated = not using_battle_server() and multiplayer.is_server()
 	puppet.set_physics_process(puppet.net_simulated)
 	puppet.set_process_unhandled_input(false)
 	puppet.max_health = 400
@@ -555,6 +713,16 @@ func set_training(enabled: bool) -> void:
 			dummy.remove_from_group("combat_targets")
 
 func _process(_delta: float) -> void:
+	if using_battle_server():
+		match_label.visible = phase == "play"
+		match_label.text = "独立战斗服 1v1 · 玩家%d · %s · RTT %d ms · F8 离开" % [local_player.slot_index+1,"对手已连接" if not puppets.is_empty() else "等待对手",get_node("BattleClientSession").rtt_ms]
+		return
+	if dedicated_server:
+		var dedicated_now := Time.get_ticks_msec()
+		if dedicated_now >= next_state_at_msec:
+			next_state_at_msec = dedicated_now + 33
+			broadcast_snapshot()
+		return
 	refresh_match_label()
 	refresh_scoreboard()
 	if not in_match():
@@ -638,6 +806,10 @@ func client_input(move: Vector3, aim: Vector3, seq: int, crouch: bool = false) -
 	puppet.net_crouch = crouch
 
 func request_action(action: String, aim: Vector3) -> void:
+	var battle_session := get_node_or_null("BattleClientSession")
+	if battle_session and battle_session.has_method("request_action"):
+		battle_session.request_action(action, aim)
+		return
 	if multiplayer.is_server() or not in_match():
 		return
 	action_seq += 1
@@ -649,21 +821,24 @@ func host_action(action: String, aim: Vector3, seq: int) -> void:
 	if not multiplayer.is_server() or not in_match():
 		return
 	var sender := multiplayer.get_remote_sender_id()
-	if not peer_in_room(sender) or int(seen_action.get(sender, 0)) >= seq:
+	if not CLIENT_ACTIONS.has(action) or not peer_in_room(sender) or int(seen_action.get(sender, 0)) >= seq:
+		return
+	if aim.length_squared() > 1.21:
 		return
 	seen_action[sender] = seq
 	var puppet := puppet_for(sender)
 	if puppet == null or not puppet.has_method("call_action"):
 		return
-	puppet.net_aim = aim
+	puppet.net_aim = aim.normalized() if aim.length_squared() > 0.001 else Vector3.ZERO
 	if aim.length_squared() > 0.001:
-		puppet.face_to(aim)
+		puppet.face_to(puppet.net_aim)
 	last_action_name = "收到 %s #%d" % [action, seq]
 	puppet.call_action(action)
 
 func broadcast_snapshot() -> void:
 	var bodies: Array = []
-	bodies.append(pack_body(local_player, multiplayer.get_unique_id()))
+	if not headless_battle_server:
+		bodies.append(pack_body(local_player, multiplayer.get_unique_id()))
 	for peer_id in puppets.keys():
 		var body := puppet_for(int(peer_id))
 		if body:
@@ -713,6 +888,8 @@ func host_apply_hit(attacker: Node, target: Node, method: String, direction: Vec
 		return false
 	if attacker.has_method("can_hurt") and not attacker.can_hurt(target):
 		return false
+	if not validate_host_intent(attacker, target, method, direction):
+		return false
 	var before := int(target.get("health"))
 	var attacker_peer := int(attacker.get("owner_peer"))
 	if attacker_peer <= 0:
@@ -730,13 +907,37 @@ func host_apply_hit(attacker: Node, target: Node, method: String, direction: Vec
 	var at: Vector3 = attacker.global_position
 	var hit_at: Vector3 = target.global_position
 	var launch: Vector3 = target.velocity
+	var event = CombatEventData.new()
+	event.server_tick = Engine.get_physics_frames()
+	var matching_intent = attacker.get("last_hit_intent")
+	event.intent_id = str(matching_intent.intent_id) if matching_intent != null and str(matching_intent.effect_method) == method else ""
+	event.attacker_peer = attacker_peer
+	event.victim_peer = victim_peer
+	event.attack_id = attack_name if not attack_name.is_empty() else method
+	event.effect_method = method
+	event.direction = direction
+	event.target_id = target.get_instance_id()
+	event.health_before = before
+	event.health_after = after
+	event.damage = before - after
+	event.lethal = after <= 0
+	event.resulting_velocity = launch
+	event.resulting_juggled = bool(target.get("juggled"))
+	event.resulting_downed = bool(target.get("downed"))
+	event.resulting_kick_bounce = bool(target.get("kick_bounce"))
+	event.resulting_float_timer = float(target.get("victim_float"))
+	event.resulting_bounce = bool(target.get("bounce_pending"))
+	broadcast_combat_event(event)
 	last_hit_line = "命中 %s→%s  t=%d  攻(%.1f,%.1f,%.1f) 受(%.1f,%.1f,%.1f) %s  %d→%d  v(%.1f,%.1f,%.1f)" % [
 		peer_name(attacker_peer), peer_name(victim_peer), Time.get_ticks_msec(),
 		at.x, at.y, at.z, hit_at.x, hit_at.y, hit_at.z,
 		method if method != "" else attack_name, before, after, launch.x, launch.y, launch.z,
 	]
 	print(last_hit_line)
-	if victim_peer != multiplayer.get_unique_id():
+	# Melee intents now use CombatEvent as the only authoritative hit result.
+	# Projectiles and furniture have not moved to intents yet, so they keep the
+	# old confirmation RPC until their collision paths are migrated.
+	if event.intent_id.is_empty() and victim_peer != multiplayer.get_unique_id():
 		rpc_id(
 			victim_peer, "confirm_hit", method, attack_name, direction, after,
 			bool(target.get("downed")), launch, bool(target.get("juggled")),
@@ -750,6 +951,123 @@ func host_apply_hit(attacker: Node, target: Node, method: String, direction: Vec
 		feedback.impact(hit_at + Vector3.UP * 1.15, heavy, int(attacker.get("combo_count")))
 	attacker.hit_pause = maxf(float(attacker.get("hit_pause")), 0.05 if heavy else 0.03)
 	return true
+
+func validate_host_intent(attacker: Node, target: Node, method: String, direction: Vector3) -> bool:
+	var intent = attacker.get("last_hit_intent")
+	# Legacy projectiles and furniture attacks have not migrated yet. Their
+	# existing host-side collision path remains active until they get intents.
+	if intent == null:
+		return true
+	if str(intent.effect_method) != method:
+		return true
+	if Engine.get_physics_frames() - int(intent.issued_tick) > 3:
+		return false
+	if bool(intent.requires_direction_match) and direction.length_squared() > 0.001 and intent.direction.dot(direction.normalized()) < 0.99:
+		return false
+	return HitDetection.is_valid_target(attacker, target, intent)
+
+func broadcast_combat_event(event) -> void:
+	combat_event_seq += 1
+	event.event_id = combat_event_seq
+	record_combat_event(event)
+	rpc("combat_event", event.to_payload())
+
+@rpc("authority", "call_remote", "reliable")
+func combat_event(payload: Dictionary) -> void:
+	if multiplayer.is_server() or not in_match() or multiplayer.get_remote_sender_id() != 1:
+		return
+	var event = CombatEventData.from_payload(payload)
+	if event.event_id <= seen_combat_event:
+		return
+	record_combat_event(event)
+	if not event.intent_id.is_empty() and event.victim_peer == multiplayer.get_unique_id():
+		apply_combat_event(event)
+
+func record_combat_event(event) -> void:
+	seen_combat_event = maxi(seen_combat_event, int(event.event_id))
+	last_confirmed_combat_event = event
+	last_action_name = "确认 %s #%d" % [event.attack_id, event.event_id]
+
+func apply_combat_event(event) -> void:
+	# Invoke the existing victim method first so its local animation, camera and
+	# feedback hooks still run. The authoritative state below then overrides any
+	# client-side approximation made by that method.
+	if event.effect_method != "" and local_player.has_method(event.effect_method):
+		local_player.call(event.effect_method, event.direction)
+	elif event.attack_id != "" and local_player.has_method("take_hit"):
+		local_player.take_hit(event.attack_id)
+	local_player.health = event.health_after
+	local_player.downed = event.resulting_downed and event.health_after <= 0
+	local_player.velocity = event.resulting_velocity
+	local_player.juggled = event.resulting_juggled
+	local_player.kick_bounce = event.resulting_kick_bounce
+	local_player.victim_float = event.resulting_float_timer
+	local_player.bounce_pending = event.resulting_bounce
+
+func host_apply_chair_control(attacker: Node, target: Node, control: String, at: Vector3, direction := Vector3.ZERO) -> bool:
+	if not multiplayer.is_server() or attacker == null or target == null or not in_match():
+		return false
+	if not attacker.has_method("can_hurt") or not attacker.can_hurt(target):
+		return false
+	if control == "grab":
+		if target.global_position.distance_to(at) > 1.65 or not target.has_method("begin_chair_ride"):
+			return false
+		target.begin_chair_ride(direction)
+	elif control == "release":
+		if not bool(target.get("chair_ride")) or not target.has_method("drop_from_chair"):
+			return false
+		target.drop_from_chair(direction)
+	elif control == "throw":
+		if not bool(target.get("chair_ride")) or not target.has_method("end_chair_ride"):
+			return false
+		target.end_chair_ride(direction)
+	else:
+		return false
+	var event = ChairControlEventData.new()
+	event.server_tick = Engine.get_physics_frames()
+	event.control = control
+	event.attacker_peer = int(attacker.get("owner_peer"))
+	if event.attacker_peer <= 0:
+		event.attacker_peer = multiplayer.get_unique_id()
+	event.victim_peer = int(target.get("owner_peer"))
+	if event.victim_peer <= 0:
+		event.victim_peer = multiplayer.get_unique_id()
+	event.direction = direction
+	event.position = at
+	event.health = int(target.get("health"))
+	event.downed = bool(target.get("downed"))
+	event.velocity = target.velocity
+	event.juggled = bool(target.get("juggled"))
+	event.kick_bounce = bool(target.get("kick_bounce"))
+	event.bounce_pending = bool(target.get("bounce_pending"))
+	event.float_timer = float(target.get("victim_float"))
+	event.float_session = bool(target.get("float_session"))
+	event.airborne = bool(target.get("airborne"))
+	event.seated = bool(target.get("seated"))
+	event.chair_ride = bool(target.get("chair_ride"))
+	event.pinned = bool(target.get("net_pinned"))
+	broadcast_chair_control_event(event)
+	if control == "grab" and event.downed and event.attacker_peer > 0:
+		rpc("register_kill", event.attacker_peer, "p:%d" % event.victim_peer)
+	return control != "grab" or event.chair_ride
+
+func broadcast_chair_control_event(event) -> void:
+	chair_control_seq += 1
+	event.event_id = chair_control_seq
+	last_chair_control_event = event
+	rpc("chair_control_event", event.to_payload())
+
+@rpc("authority", "call_remote", "reliable")
+func chair_control_event(payload: Dictionary) -> void:
+	if multiplayer.is_server() or not in_match() or multiplayer.get_remote_sender_id() != 1:
+		return
+	var event = ChairControlEventData.from_payload(payload)
+	if event.event_id <= seen_chair_control_event:
+		return
+	seen_chair_control_event = event.event_id
+	last_chair_control_event = event
+	if event.victim_peer == multiplayer.get_unique_id() and local_player.has_method("apply_chair_control_event"):
+		local_player.apply_chair_control_event(event)
 
 @rpc("authority", "call_remote", "reliable")
 func confirm_hit(
@@ -919,6 +1237,18 @@ func clear_scores() -> void:
 	deaths.clear()
 	last_kill_line = ""
 	last_kill_until = 0
+	battle_server_scores.clear()
+
+func apply_battle_server_scores(scores: Array) -> void:
+	battle_server_scores = scores.duplicate(true)
+	if score_panel == null or score_label == null:
+		return
+	score_panel.visible = true
+	var lines := "比武比分"
+	for row in battle_server_scores:
+		if row is Dictionary:
+			lines += "\n玩家%d    %d 分" % [int(row.get("slot", -1)) + 1, int(row.get("score", 0))]
+	score_label.text = lines
 
 func score_payload() -> Array:
 	var seen := {}
@@ -1025,12 +1355,11 @@ func push_carry(peer_id: int, at: Vector3) -> void:
 		return
 	rpc_id(peer_id, "receive_carry", at)
 
-@rpc("any_peer", "call_remote", "unreliable")
+@rpc("authority", "call_remote", "unreliable")
 func receive_carry(at: Vector3) -> void:
 	if not in_match() or not local_player.chair_ride:
 		return
-	var sender := multiplayer.get_remote_sender_id()
-	if sender == 0 or not peer_in_room(sender):
+	if multiplayer.get_remote_sender_id() != 1:
 		return
 	local_player.global_position = at
 
@@ -1087,7 +1416,7 @@ func spawn_remote_chair(origin: Vector3, direction: Vector3) -> void:
 	chair.cosmetic = true
 	get_parent().add_child(chair)
 	chair.global_position = origin
-	chair.launch(direction)
+	chair.launch(null, direction)
 
 func leave_room(reason: String) -> void:
 	if closing:
@@ -1134,5 +1463,9 @@ func leave_room(reason: String) -> void:
 	closing = false
 
 func close_peer() -> void:
+	var battle := get_node_or_null("BattleClientSession")
+	if battle:
+		remove_child(battle)
+		battle.shutdown()
 	if multiplayer.multiplayer_peer != null:
 		multiplayer.multiplayer_peer = null

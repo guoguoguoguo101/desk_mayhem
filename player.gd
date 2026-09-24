@@ -4,32 +4,36 @@ const THROWN_ITEM = preload("res://thrown_item.gd")
 const RETURNING_POT = preload("res://returning_pot.gd")
 var active_pot: Node3D
 const RUSHING_CHAIR = preload("res://rushing_chair.gd")
+const BattleRules = preload("res://combat/battle_rules.gd")
 const FloatRules = preload("res://float_rules.gd")
+const CombatStateData = preload("res://combat/combat_state.gd")
+const CombatRules = preload("res://combat/combat_resolver.gd")
+const AttackData = preload("res://combat/attack_catalog.gd")
+const HitIntentData = preload("res://combat/hit_intent.gd")
+const HitDetection = preload("res://combat/hit_detector.gd")
 
 enum Weapon { UMBRELLA, COFFEE, POT, CHAIR }
 
 const WEAPON_NAMES: Array[String] = ["雨伞", "咖啡杯", "锅", "办公椅"]
-const RANGED_HITS: Array[String] = ["文件夹", "锅", "咖啡"]
-
 const CD_PUNCH := 0.4
-const CD_KICK := 0.65
-const CD_DASH := 1.5
+const CD_KICK := BattleRules.CD_KICK
+const CD_DASH := BattleRules.CD_DASH
 const CD_BLOCK := 4.0
-const CD_SPIN := 2.2
-const SPIN_DURATION := 0.48
-const SPIN_HIT_AT := 0.24
+const CD_SPIN := BattleRules.CD_SPIN
+const SPIN_DURATION := BattleRules.SPIN_DURATION
+const SPIN_HIT_AT := BattleRules.SPIN_HIT_AT
 const SPIN_REACH := 2.4
 const SPIN_HEIGHT := 3.2
-const SPIN_PUSH := 5.5
+const SPIN_PUSH := BattleRules.SPIN_PUSH
 const CD_COFFEE := 0.85
 const CD_DRINK := 8.0
-const CD_POT := 0.75
-const CD_SLAM := 2.0
+const CD_POT := BattleRules.CD_POT
+const CD_SLAM := BattleRules.CD_SLAM
 const CD_CHAIR := 2.4
 const CD_MOUNT := 0.35
 const BLOCK_DURATION := 1.5
 const BUFF_DURATION := 5.0
-const FOLLOWUP_WINDOW := 1.2
+const FOLLOWUP_WINDOW := BattleRules.FOLLOWUP_WINDOW
 const PUNCH_LINK := 0.55
 const HITSTUN := 0.45
 
@@ -56,6 +60,8 @@ var spawn_point := Vector3.ZERO
 var mounted := false
 var banner := ""
 var banner_time := 0.0
+var last_combat_event: CombatEvent
+var last_hit_intent
 
 var cd := {
 	"punch": 0.0,
@@ -85,6 +91,8 @@ var spin_time := 0.0
 var spin_facing := 0.0
 var spin_hit_done := false
 var spin_ghost_time := 0.0
+var buffered_attack := ""
+var buffered_until := 0
 var umbrella_rest := Vector3.ZERO
 var kick_time := 0.0
 var punch_time := 0.0
@@ -289,7 +297,26 @@ func make_cup_prop() -> Node3D:
 	prop.position = Vector3(0.18, 0.42, -0.62)
 	return prop
 
+var external_combat_view := false
+
 func _process(delta: float) -> void:
+	if external_combat_view:
+		# Independent battle mode: simulation and action phases belong to CombatWorld.
+		# This branch only animates; no legacy hits, correction, cooldowns or respawn.
+		flinch_time = maxf(0.0,flinch_time-delta)
+		banner_time = maxf(0.0,banner_time-delta)
+		combo_timer = maxf(0.0,combo_timer-delta)
+		if combo_timer<=0: combo_count = 0
+		walk_phase += delta*Vector2(velocity.x,velocity.z).length()*2.4
+		if not net_puppet: refresh_aim()
+		if spin_time>0:
+			spin_ghost_time -= delta
+			if spin_ghost_time<=0:
+				spin_ghost_time = 0.05
+				feedback.spin_ghost(global_position+Vector3.UP*0.35,visual.rotation.y)
+		apply_body_pose(delta)
+		update_visuals()
+		return
 	tick_cooldowns(delta)
 	blink_cooldown = maxf(0.0, blink_cooldown - delta)
 	dash_followup_timer = maxf(0.0, dash_followup_timer - delta)
@@ -499,6 +526,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if not pressed or Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return
+	var battle_net := get_tree().get_first_node_in_group("network")
+	if battle_net and battle_net.has_method("using_battle_server") and battle_net.using_battle_server():
+		var action := ""
+		if event is InputEventMouseButton:
+			action = "punch" if event.button_index == MOUSE_BUTTON_LEFT else ("kick" if event.button_index == MOUSE_BUTTON_RIGHT else "")
+		elif event is InputEventKey:
+			action = str({KEY_Q:"skill_a0",KEY_E:"skill_a1",KEY_F:"skill_b0",KEY_C:"skill_b1",KEY_SPACE:"jump",KEY_SHIFT:"blink"}.get(event.physical_keycode,""))
+		if not action.is_empty():
+			battle_net.request_action(action,aim_direction())
+		return
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			replicate_action("punch")
@@ -547,6 +584,58 @@ func can_chain() -> bool:
 	if downed or knockdown or mounted or juggled or dash_time > 0.0 or block_time > 0.0 or stagger_time > 0.0:
 		return false
 	return action_lock <= 0.0 or cancel_time > 0.0
+
+func _buffer_attack(id: String) -> void:
+	if downed or knockdown or mounted or juggled or kick_bounce or stagger_time > 0.0:
+		return
+	var now := Time.get_ticks_msec()
+	if buffered_attack == id and now <= buffered_until:
+		return
+	buffered_attack = id
+	buffered_until = now + BattleRules.BUFFER_MS
+
+func _clear_attack_buffer() -> void:
+	buffered_attack = ""
+	buffered_until = 0
+
+func _buffer_ready(id: String) -> bool:
+	match id:
+		"spin":
+			return can_act() and float(cd["spin"]) <= 0.0
+		"slam":
+			return can_chain() and float(cd["slam"]) <= 0.0
+		"pot":
+			return can_act() and float(cd["pot"]) <= 0.0 and not is_instance_valid(active_pot)
+		"dash":
+			return dash_followup_timer <= 0.0 and can_act() and float(cd["dash"]) <= 0.0
+		"uppercut":
+			return dash_followup_timer > 0.0 and not downed and not mounted and not (action_lock > 0.0 and cancel_time <= 0.0)
+	return false
+
+func _release_buffered_attack() -> void:
+	var net := get_tree().get_first_node_in_group("network")
+	if net and net.has_method("using_battle_server") and net.using_battle_server():
+		return
+	if buffered_attack == "":
+		return
+	if Time.get_ticks_msec() > buffered_until:
+		_clear_attack_buffer()
+		return
+	if not _buffer_ready(buffered_attack):
+		return
+	var id := buffered_attack
+	_clear_attack_buffer()
+	match id:
+		"spin":
+			umbrella_spin()
+		"slam":
+			pot_slam()
+		"pot":
+			throw_pot()
+		"dash":
+			umbrella_action()
+		"uppercut":
+			umbrella_uppercut()
 
 func equip_focused(next: int) -> void:
 	if not can_act():
@@ -605,12 +694,12 @@ func punch() -> void:
 	await get_tree().create_timer(0.08 if step >= 2 else 0.05).timeout
 	if not is_inside_tree() or downed:
 		return
-	var method := "punch_from"
+	var intent_id := "punch_light"
 	if step == 1:
-		method = "punch_follow"
+		intent_id = "punch_follow"
 	elif step >= 2:
-		method = "punch_launch"
-	var hits := strike_targets(forward, 1.95, 0.15, 3.2, method)
+		intent_id = "punch_uppercut"
+	var hits := strike_targets(intent_id, forward)
 	feedback.attack_arc(global_position + Vector3.UP * 0.35, forward, 1.05, Color("ffe1a4"), step >= 2)
 	if hits > 0 and step < 2:
 		punch_chain = PUNCH_LINK
@@ -633,7 +722,7 @@ func air_punch() -> void:
 	await get_tree().create_timer(0.05).timeout
 	if not is_inside_tree() or downed:
 		return
-	strike_targets(forward, 1.95, 0.15, 3.2, "punch_from")
+	strike_targets("punch_air", forward)
 	feedback.attack_arc(global_position + Vector3.UP * 0.5, forward, 1.1, Color("ffe1a4"))
 
 func kick() -> void:
@@ -648,7 +737,7 @@ func kick() -> void:
 	await get_tree().create_timer(0.08).timeout
 	if not is_inside_tree() or downed:
 		return
-	strike_targets(forward, 2.5, 0.12, 3.4, "kick_from")
+	strike_targets("kick_front", forward)
 	feedback.attack_arc(global_position, forward, 1.4, Color("f5be86"))
 
 func umbrella_action() -> void:
@@ -659,6 +748,8 @@ func umbrella_action() -> void:
 		umbrella_uppercut()
 		return
 	if dash_time > 0.0 or action_lock > 0.0 or float(cd["dash"]) > 0.0:
+		if action_lock > 0.0:
+			_buffer_attack("dash")
 		return
 	block_time = 0.0
 	start_dash()
@@ -680,6 +771,7 @@ func umbrella_uppercut() -> void:
 	if downed or mounted or block_time > 0.0:
 		return
 	if action_lock > 0.0 and cancel_time <= 0.0:
+		_buffer_attack("uppercut")
 		return
 	cancel_time = 0.0
 	dash_followup_timer = 0.0
@@ -687,13 +779,13 @@ func umbrella_uppercut() -> void:
 	velocity.x = 0.0
 	velocity.z = 0.0
 	uppercut_time = 0.3
-	action_lock = 0.32
+	action_lock = BattleRules.UPPERCUT_LOCK
 	feedback.play_swing()
 	var forward := facing_direction()
-	await get_tree().create_timer(0.1).timeout
+	await get_tree().create_timer(BattleRules.UPPERCUT_HIT).timeout
 	if not is_inside_tree() or downed:
 		return
-	strike_targets(forward, 2.4, 0.2, 3.2, "launch_up")
+	strike_targets("umbrella_uppercut", forward)
 	feedback.attack_arc(global_position + Vector3.UP * 0.4, forward, 1.7, Color("85e2dd"), true)
 
 func start_block() -> void:
@@ -705,6 +797,8 @@ func start_block() -> void:
 
 func umbrella_spin() -> void:
 	if not can_act() or float(cd["spin"]) > 0.0:
+		if action_lock > 0.0 and dash_time <= 0.0:
+			_buffer_attack("spin")
 		return
 	cd["spin"] = CD_SPIN
 	spin_time = SPIN_DURATION
@@ -721,22 +815,7 @@ func umbrella_spin() -> void:
 func resolve_umbrella_spin() -> void:
 	feedback.spin_burst(global_position + Vector3.UP * 0.25, true)
 	var facing := Vector3(-sin(spin_facing), 0.0, -cos(spin_facing))
-	var hits := 0
-	for target in get_tree().get_nodes_in_group("combat_targets"):
-		if target.get("downed"):
-			continue
-		var to_target: Vector3 = target.global_position - global_position
-		var height_gap := absf(to_target.y)
-		to_target.y = 0.0
-		if to_target.length() > SPIN_REACH or height_gap > SPIN_HEIGHT:
-			continue
-		var outward := facing
-		if to_target.length() > 0.05:
-			outward = to_target.normalized()
-		if connect_hit(target, "umbrella_spin_from", outward):
-			hits += 1
-	if hits > 0:
-		register_combo(hits)
+	strike_radial_targets("umbrella_spin", facing)
 
 func throw_coffee() -> void:
 	if not can_act() or float(cd["coffee"]) > 0.0:
@@ -766,6 +845,8 @@ func throw_pot() -> void:
 				net.rpc("recall_remote_pot", owner_peer if net_puppet else multiplayer.get_unique_id())
 		return
 	if not can_act() or float(cd["pot"]) > 0.0:
+		if action_lock > 0.0 and dash_time <= 0.0:
+			_buffer_attack("pot")
 		return
 	var forward := facing_direction()
 	cd["pot"] = CD_POT
@@ -790,43 +871,24 @@ func pot_return(direction: Vector3) -> void:
 
 func pot_slam() -> void:
 	if not can_chain() or float(cd["slam"]) > 0.0:
+		if action_lock > 0.0 and cancel_time <= 0.0:
+			_buffer_attack("slam")
 		return
 	var forward := aim_direction()
-	var aerial := foe_juggled(2.6, 3.5)
+	var aerial := foe_juggled(BattleRules.SLAM_RANGE, BattleRules.SLAM_HEIGHT)
 	face_to(forward)
 	forced_facing = 0.55 if aerial else 0.65
 	cancel_time = 0.0
 	cd["slam"] = CD_SLAM
-	pot_span = 0.4 if aerial else 0.7
-	action_lock = 0.34 if aerial else 0.72
+	pot_span = BattleRules.SLAM_AIR_ANIM if aerial else BattleRules.SLAM_GROUND_ANIM
+	action_lock = BattleRules.timing("pot_slam",aerial).y
 	pot_time = pot_span
-	if aerial:
-		velocity.x = forward.x * 4.2
-		velocity.z = forward.z * 4.2
-		if is_on_floor():
-			velocity.y = 6.2
-	elif is_on_floor():
-		velocity.y = 8.2
+	velocity = BattleRules.slam_startup(velocity, forward, aerial, is_on_floor())
 	feedback.play_swing()
-	await get_tree().create_timer(0.2 if aerial else 0.46).timeout
+	await get_tree().create_timer(BattleRules.timing("pot_slam",aerial).x).timeout
 	if not is_inside_tree() or downed:
 		return
-	var hits := 0
-	for target in get_tree().get_nodes_in_group("combat_targets"):
-		var to_target: Vector3 = target.global_position - global_position
-		var height_gap := absf(to_target.y)
-		to_target.y = 0.0
-		var flat_distance := to_target.length()
-		if flat_distance > 2.5 or height_gap > 3.5:
-			continue
-		if flat_distance > 0.7 and to_target.normalized().dot(forward) <= 0.1:
-			continue
-		if target.get("downed"):
-			continue
-		if connect_hit(target, "slam_from_pot", forward):
-			hits += 1
-	if hits > 0:
-		register_combo(hits)
+	strike_targets("pot_slam", forward)
 
 func summon_chair() -> void:
 	if not can_act() or float(cd["chair"]) > 0.0:
@@ -844,7 +906,7 @@ func summon_chair() -> void:
 	get_parent().add_child(chair)
 	chair.global_position = global_position + forward * 1.15
 	chair.global_position.y = 0.0
-	chair.launch(forward)
+	chair.launch(self, forward)
 	var net := get_tree().get_first_node_in_group("network")
 	if net and net.has_method("announce_chair") and net.in_match():
 		net.announce_chair(chair.global_position, chair.direction)
@@ -921,9 +983,14 @@ func in_net_match() -> bool:
 	return net != null and net.has_method("in_match") and net.in_match()
 
 func replicate_action(action: String) -> void:
-	if net_puppet or not in_net_match() or multiplayer.is_server():
+	if net_puppet or not in_net_match():
 		return
 	var net := get_tree().get_first_node_in_group("network")
+	if net and net.has_method("using_battle_server") and net.using_battle_server():
+		net.request_action(action, aim_direction())
+		return
+	if multiplayer.is_server():
+		return
 	if net and net.has_method("request_action"):
 		net.request_action(action, aim_direction())
 
@@ -1259,19 +1326,32 @@ func reset_for_round() -> void:
 	for key in cd.keys():
 		cd[key] = 0.0
 
-func strike_targets(forward: Vector3, reach: float, dot_min: float, height_limit: float, method: String) -> int:
+func strike_targets(intent_id: String, forward: Vector3) -> int:
+	var intent = HitIntentData.melee(intent_id, get_instance_id(), forward, Engine.get_physics_frames())
+	last_hit_intent = intent
+	var targets := HitDetection.find_melee_targets(self, intent)
 	var hits := 0
-	for target in get_tree().get_nodes_in_group("combat_targets"):
-		if target.get("downed"):
-			continue
-		var to_target: Vector3 = target.global_position - global_position
-		var height_gap := absf(to_target.y)
-		to_target.y = 0.0
-		if to_target.length() > reach or height_gap > height_limit:
-			continue
-		if to_target.length() > 0.05 and to_target.normalized().dot(forward) <= dot_min:
-			continue
-		if connect_hit(target, method, forward):
+	for target in targets:
+		if connect_hit(target, intent.effect_method, intent.direction):
+			hits += 1
+	if hits > 0:
+		register_combo(hits)
+	return hits
+
+func strike_radial_targets(intent_id: String, fallback_direction: Vector3) -> int:
+	var intent = HitIntentData.melee(intent_id, get_instance_id(), fallback_direction, Engine.get_physics_frames())
+	var targets := HitDetection.find_melee_targets(self, intent)
+	var hits := 0
+	for target in targets:
+		var outward: Vector3 = target.global_position - global_position
+		outward.y = 0.0
+		if outward.length_squared() < 0.0025:
+			outward = fallback_direction
+		else:
+			outward = outward.normalized()
+		intent.direction = outward
+		last_hit_intent = intent
+		if connect_hit(target, intent.effect_method, outward):
 			hits += 1
 	if hits > 0:
 		register_combo(hits)
@@ -1285,6 +1365,9 @@ func register_combo(hits: int) -> void:
 	cancel_time = maxf(cancel_time, 0.42)
 
 func foe_juggled(reach: float, height_limit: float) -> bool:
+	var net := get_tree().get_first_node_in_group("network")
+	if net and net.has_method("using_battle_server") and net.using_battle_server():
+		return net.get_node("BattleClientSession").foe_juggled(reach,height_limit)
 	for target in get_tree().get_nodes_in_group("combat_targets"):
 		if target.get("downed") or not target.has_method("is_juggled") or not target.is_juggled():
 			continue
@@ -1332,6 +1415,7 @@ func begin_knockdown() -> void:
 		return
 	knockdown = true
 	knockdown_time = FloatRules.KNOCKDOWN_TIME
+	_clear_attack_buffer()
 	airborne = false
 	juggled = false
 	kick_bounce = false
@@ -1360,20 +1444,20 @@ func begin_knockdown() -> void:
 func take_hit(attack_name: String = "文件夹") -> void:
 	if hit_locked():
 		return
-	if block_time > 0.0 and attack_name in RANGED_HITS:
+	_clear_attack_buffer()
+	var state := CombatStateData.from_body(self)
+	state.blocking = block_time > 0.0
+	var result := CombatRules.resolve_hit(state, attack_name, AttackData.PROFILE_PVP)
+	last_combat_event = result
+	if result.blocked:
 		banner = "格挡"
 		banner_time = 0.7
 		feedback.play_swing()
 		return
 	drop_from_head()
 	drop_rider()
-	var damage: int = {
-		"回旋锅": 12, "回旋锅·回收": 10,
-		"文件夹": 12, "锅": 18, "咖啡": 12, "轻拳": 8, "连拳": 8, "补拳": 10,
-		"上勾拳": 16, "前踢": 12, "踢飞": 22, "雨伞": 12, "雨伞挑飞": 20,
-		"扣锅": 28, "空中扣锅": 26, "办公椅": 8, "椅推": 4, "旋伞": 8,
-	}.get(attack_name, 10)
-	health = maxi(0, health - damage)
+	var damage := result.damage
+	state.apply_health_to(self)
 	banner = "%s -%d" % [attack_name, damage]
 	banner_time = 1.2
 	flinch_time = 0.2
@@ -1451,29 +1535,16 @@ func punch_launch(direction: Vector3) -> void:
 	take_hit("上勾拳")
 	if downed:
 		return
-	FloatRules.start_launch(self)
-	FloatRules.begin_float(self)
-	juggled = true
-	kick_bounce = false
-	stagger_time = 0.0
-	victim_float = 0.9
-	bounce_pending = false
-	juggle_hits = 1
-	velocity = direction * 2.0 + Vector3.UP * FloatRules.PUNCH_LAUNCH_SPEED
+	resolve_combat_motion("uppercut_launch", direction)
 
 func kick_from(direction: Vector3) -> void:
 	if hit_locked():
 		return
 	if juggled:
 		take_hit("踢飞")
-		juggled = false
-		victim_float = 0.0
-		bounce_pending = false
-		kick_bounce = true
-		airborne = true
-		victim_float = 0.18
-		var bonus := minf(float(combo_count), 6.0) * 1.1
-		velocity = direction * (18.0 + bonus) + Vector3.UP * 2.2
+		if downed:
+			return
+		resolve_combat_motion("air_kick", direction, combo_count)
 		return
 	take_hit("前踢")
 	if downed:
@@ -1486,33 +1557,49 @@ func launch_up(direction: Vector3) -> void:
 	take_hit("雨伞挑飞")
 	if downed:
 		return
-	FloatRules.start_launch(self)
-	FloatRules.begin_float(self)
-	juggled = true
-	kick_bounce = false
-	victim_float = 0.95
-	bounce_pending = false
-	juggle_hits = 1
-	stagger_time = 0.0
-	velocity = direction * 1.4 + Vector3.UP * FloatRules.UMBRELLA_LAUNCH_SPEED
+	resolve_combat_motion("umbrella_launch", direction)
 
 func slam_from_pot(direction: Vector3) -> void:
 	if hit_locked():
 		return
 	if juggled or kick_bounce:
 		take_hit("空中扣锅")
-		kick_bounce = false
 		if downed:
 			return
-		victim_float = 0.0
-		bounce_pending = true
-		velocity = direction * 1.4 + Vector3.DOWN * 16.0
+		resolve_combat_motion("air_slam", direction)
 		return
 	take_hit("扣锅")
 	if downed:
 		return
-	velocity = Vector3.ZERO
-	stagger_time = maxf(stagger_time, 1.2)
+	resolve_combat_motion("ground_slam", direction)
+
+func capture_combat_state() -> CombatState:
+	var state := CombatStateData.from_body(self)
+	state.float_session = float_session
+	state.air_punch_hold_used = air_punch_hold_used
+	state.float_apex = float_apex
+	state.float_timer = victim_float
+	state.airborne = airborne
+	state.stun_time = stagger_time
+	return state
+
+func apply_combat_motion(state: CombatState) -> void:
+	velocity = state.velocity
+	juggled = state.juggled
+	kick_bounce = state.kick_bounce
+	bounce_pending = state.bounce_pending
+	float_session = state.float_session
+	air_punch_hold_used = state.air_punch_hold_used
+	float_apex = state.float_apex
+	victim_float = state.float_timer
+	airborne = state.airborne
+	stagger_time = state.stun_time
+	juggle_hits = state.juggle_hits
+
+func resolve_combat_motion(effect: String, direction: Vector3, attacker_combo := 0) -> void:
+	var state := capture_combat_state()
+	last_combat_event = CombatRules.resolve_motion(state, effect, direction, AttackData.PROFILE_PVP, attacker_combo)
+	apply_combat_motion(state)
 
 func bump(direction: Vector3, speed: float) -> void:
 	if hit_locked() or chair_ride:
@@ -1542,19 +1629,15 @@ func umbrella_spin_from(direction: Vector3) -> void:
 		take_hit("旋伞")
 		if downed or bounce_pending or kick_bounce or not juggled:
 			return
-		FloatRules.extend(self, FloatRules.SPIN_LIFT)
+		velocity = BattleRules.apply_spin_velocity(velocity, flat, true, false, false)
+		float_apex = false
 		return
 	take_hit("旋伞")
 	if downed:
 		return
-	if kick_bounce or bounce_pending:
-		velocity.x += flat.x * SPIN_PUSH
-		velocity.z += flat.z * SPIN_PUSH
-		return
-	stagger_time = 0.28
-	velocity.x = flat.x * SPIN_PUSH
-	velocity.z = flat.z * SPIN_PUSH
-	velocity.y = maxf(velocity.y, 0.2)
+	velocity = BattleRules.apply_spin_velocity(velocity, flat, false, kick_bounce, bounce_pending)
+	if not kick_bounce and not bounce_pending:
+		stagger_time = BattleRules.SPIN_GROUND_STUN
 
 func shove_from(direction: Vector3) -> void:
 	if hit_locked() or chair_ride:
@@ -1615,6 +1698,32 @@ func end_chair_ride(throw_velocity: Vector3) -> void:
 	victim_float = 0.5
 	var pop := throw_velocity
 	velocity = pop
+
+func apply_chair_control_event(event) -> void:
+	match str(event.control):
+		"grab":
+			begin_chair_ride(event.direction)
+		"release":
+			drop_from_chair(event.direction)
+		"throw":
+			end_chair_ride(event.direction)
+		_:
+			return
+	# Keep local animation and feedback from the existing methods, then replace
+	# their approximated state with the server's control decision.
+	health = event.health
+	downed = event.downed
+	velocity = event.velocity
+	juggled = event.juggled
+	kick_bounce = event.kick_bounce
+	bounce_pending = event.bounce_pending
+	victim_float = event.float_timer
+	float_session = event.float_session
+	airborne = event.airborne
+	seated = event.seated
+	chair_ride = event.chair_ride
+	net_pinned = event.pinned
+	global_position = event.position
 
 func facing_direction() -> Vector3:
 	var forward := -visual.global_transform.basis.z
@@ -1896,6 +2005,7 @@ func _physics_process(delta: float) -> void:
 		return
 	if controls_locked and not net_simulated:
 		return
+	_release_buffered_attack()
 	head_lock = maxf(0.0, head_lock - delta)
 	refresh_crouch()
 	if chair_ride:

@@ -1,0 +1,9 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://office_demo.tscn" id="1_office"]
+[ext_resource type="Script" path="res://server_main.gd" id="2_server"]
+
+; Inherit the gameplay scene rather than rebuilding its network node at runtime.
+; This preserves the exact RPC node path and method table used by clients.
+[node name="OfficeDemo" instance=ExtResource("1_office")]
+script = ExtResource("2_server")

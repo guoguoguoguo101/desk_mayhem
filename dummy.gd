@@ -33,6 +33,7 @@ var hall_dummy := false
 var dummy_index := -1
 var pending_attacker := 0
 var suppress_kill := false
+var last_combat_event: CombatEvent
 
 @onready var visual: Node3D = $Visual
 @onready var hit_label: Label3D = $HitLabel
@@ -43,6 +44,10 @@ var suppress_kill := false
 var flash_material := StandardMaterial3D.new()
 const THROWN_ITEM = preload("res://thrown_item.gd")
 const FloatRules = preload("res://float_rules.gd")
+const BattleRules = preload("res://combat/battle_rules.gd")
+const CombatStateData = preload("res://combat/combat_state.gd")
+const CombatRules = preload("res://combat/combat_resolver.gd")
+const AttackData = preload("res://combat/attack_catalog.gd")
 
 func dress_dummy() -> void:
 	paint_part("Post", Color("3c434a"))
@@ -105,31 +110,14 @@ func take_hit(attack_name: String = "文件夹") -> void:
 		return
 	drop_rider()
 	hit_count += 1
-	var damage: int = {
-		"轻拳": 8,
-		"文件夹": 18,
-		"雨伞": 12,
-		"雨伞挑飞": 25,
-		"前踢": 12,
-		"连拳": 8,
-		"补拳": 10,
-		"上勾拳": 18,
-		"踢飞": 26,
-		"咖啡": 12,
-		"锅": 20,
-		"回旋锅": 14,
-		"回旋锅·回收": 12,
-		"扣锅": 35,
-		"空中扣锅": 32,
-		"旋伞": 8,
-		"办公椅": 8,
-		"椅推": 4,
-	}.get(attack_name, 10)
 	var combo := 0
 	if player != null:
 		combo = int(player.combo_count)
-	damage += mini(combo, 6)
-	health = maxi(0, health - damage)
+	var state := CombatStateData.from_body(self)
+	var result := CombatRules.resolve_hit(state, attack_name, AttackData.PROFILE_TRAINING, combo)
+	last_combat_event = result
+	var damage := result.damage
+	state.apply_health_to(self)
 	hit_label.text = "%s -%d  |  HP %d/%d" % [attack_name, damage, health, max_health]
 	hit_label.modulate = Color(1.0, 0.35, 0.26)
 	wobble_time = 0.26
@@ -242,7 +230,7 @@ func punch_launch(direction: Vector3) -> void:
 	take_hit("上勾拳")
 	if hit_locked():
 		return
-	begin_juggle(direction * 1.6 + Vector3.UP * FloatRules.PUNCH_LAUNCH_SPEED)
+	resolve_combat_motion("uppercut_launch", direction)
 
 func bump(direction: Vector3, speed: float) -> void:
 	if hit_locked() or seated:
@@ -268,7 +256,7 @@ func launch_up(direction: Vector3) -> void:
 	take_hit("雨伞挑飞")
 	if hit_locked():
 		return
-	begin_juggle(direction * 1.4 + Vector3.UP * FloatRules.UMBRELLA_LAUNCH_SPEED)
+	resolve_combat_motion("umbrella_launch", direction)
 
 func kick_from(direction: Vector3) -> void:
 	if hit_locked():
@@ -281,15 +269,8 @@ func kick_from(direction: Vector3) -> void:
 			return
 		var bonus := 0.0
 		if player != null:
-			bonus = minf(float(player.combo_count), 6.0) * 1.15
-		juggled = false
-		bounce_pending = false
-		float_time = 0.0
-		kick_bounce = true
-		airborne = true
-		airborne_lock = 0.16
-		stun_time = 0.2
-		velocity = direction * (18.0 + bonus) + Vector3.UP * 2.4
+			bonus = int(player.combo_count)
+		resolve_combat_motion("air_kick", direction, int(bonus))
 		return
 	take_hit("前踢")
 	if hit_locked():
@@ -305,19 +286,44 @@ func slam_from_pot(direction: Vector3) -> void:
 		take_hit("空中扣锅")
 		if downed:
 			return
-		float_time = 0.0
-		juggled = true
-		velocity = direction * 1.2 + Vector3.DOWN * 16.0
-		airborne = true
-		airborne_lock = 0.16
-		bounce_pending = true
-		bounce_stun = 0.55
+		resolve_combat_motion("air_slam", direction)
 	else:
 		take_hit("扣锅")
 		if downed:
 			return
-		velocity = Vector3.ZERO
-		stun_time = 1.8
+		resolve_combat_motion("ground_slam", direction)
+
+func capture_combat_state() -> CombatState:
+	var state := CombatStateData.from_body(self)
+	state.float_session = float_session
+	state.air_punch_hold_used = air_punch_hold_used
+	state.float_apex = float_apex
+	state.float_timer = float_time
+	state.airborne = airborne
+	state.airborne_lock = airborne_lock
+	state.bounce_stun = bounce_stun
+	state.stun_time = stun_time
+	return state
+
+func apply_combat_motion(state: CombatState) -> void:
+	velocity = state.velocity
+	juggled = state.juggled
+	kick_bounce = state.kick_bounce
+	bounce_pending = state.bounce_pending
+	float_session = state.float_session
+	air_punch_hold_used = state.air_punch_hold_used
+	float_apex = state.float_apex
+	float_time = state.float_timer
+	airborne = state.airborne
+	airborne_lock = state.airborne_lock
+	bounce_stun = state.bounce_stun
+	stun_time = state.stun_time
+	juggle_hits = state.juggle_hits
+
+func resolve_combat_motion(effect: String, direction: Vector3, attacker_combo := 0) -> void:
+	var state := capture_combat_state()
+	last_combat_event = CombatRules.resolve_motion(state, effect, direction, AttackData.PROFILE_TRAINING, attacker_combo)
+	apply_combat_motion(state)
 
 func pot_float(_direction: Vector3 = Vector3.ZERO) -> void:
 	if hit_locked():
@@ -347,18 +353,13 @@ func umbrella_spin_from(direction: Vector3) -> void:
 		take_hit("旋伞")
 		if downed or bounce_pending or kick_bounce or not juggled:
 			return
-		FloatRules.extend(self, FloatRules.SPIN_LIFT)
+		velocity = BattleRules.apply_spin_velocity(velocity, flat, true, false, false)
+		float_apex = false
 		return
 	take_hit("旋伞")
 	if hit_locked():
 		return
-	if kick_bounce or bounce_pending:
-		velocity.x += flat.x * 5.5
-		velocity.z += flat.z * 5.5
-		return
-	velocity.x = flat.x * 5.5
-	velocity.z = flat.z * 5.5
-	velocity.y = maxf(velocity.y, 0.2)
+	velocity = BattleRules.apply_spin_velocity(velocity, flat, false, kick_bounce, bounce_pending)
 
 func apply_hitstun(direction: Vector3, push: float, duration: float) -> void:
 	airborne = false
