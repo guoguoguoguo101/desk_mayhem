@@ -73,6 +73,16 @@ static func combat_timeline(attack: String, aerial := false) -> Array:
 static func skill_seconds(attack: String, aerial := false) -> float:
 	return float(skill_total(attack, aerial)) / PHYSICS_HZ
 
+## Movement during an action is independent of its attack/cancel lock.
+## Directional attacks keep their aim locked; only translation uses this scale.
+static func action_move_scale(attack: String) -> float:
+	if is_punch(attack): return 0.7
+	match attack:
+		"umbrella_spin": return 0.6
+		"kick_front", "umbrella_uppercut": return 0.55
+		"pot_slam": return 0.35
+		_: return 0.65
+
 static func punch_frame(attack: String) -> Dictionary:
 	return skill_frame(attack) if is_punch(attack) else {}
 

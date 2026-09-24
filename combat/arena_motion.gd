@@ -7,6 +7,7 @@ const DT := 1.0 / 60.0
 const FLOOR_Y := 0.9
 const NPC_LAYER := 256
 const Direction = preload("res://combat/attack_direction.gd")
+const BattleRules = preload("res://combat/battle_rules.gd")
 static func blink(body: CharacterBody3D, state: Dictionary, direction: Vector3, blockers: Array = []) -> bool:
 	var start := body.global_position
 	for step in range(10,0,-1):
@@ -80,18 +81,22 @@ static func step(body: CharacterBody3D, state: Dictionary, move: Vector3, dt: fl
 	var velocity: Vector3 = state.get("velocity", Vector3.ZERO)
 	var stunned: bool = float(state.get("stun",0.0)) > 0.0
 	var airborne: bool = bool(state.get("juggled",false)) or bool(state.get("kick_bounce",false))
+	var jumping := start.y > FLOOR_Y+0.12 or velocity.y > 0.1
 	var speed := 6.5
 	if float(state.get("dash",0.0)) > 0.0:
 		move = state.get("dash_direction",state.get("facing",Vector3.FORWARD))
 		speed = 15.0
-	elif stunned or airborne or int(state.get("health",400)) <= 0 or float(state.get("lock",0.0)) > 0.0:
+	elif stunned or airborne or int(state.get("health",400)) <= 0:
 		move = Vector3.ZERO
+	elif float(state.get("lock",0.0)) > 0.0:
+		speed *= BattleRules.action_move_scale(str(state.get("action","")))
 	else:
 		state.facing = Direction.turn(state.get("facing",Vector3.FORWARD),move,dt)
 	var slam_hold := float(state.get("slam_hold", 0.0))
 	if not airborne and slam_hold <= 0.0:
-		velocity.x = move_toward(velocity.x, move.x*speed, 28.0*dt)
-		velocity.z = move_toward(velocity.z, move.z*speed, 28.0*dt)
+		var acceleration := (10.0 if move.length_squared()>0.001 else 2.0) if jumping else 28.0
+		velocity.x = move_toward(velocity.x, move.x*speed, acceleration*dt)
+		velocity.z = move_toward(velocity.z, move.z*speed, acceleration*dt)
 	if slam_hold > 0.0:
 		state.slam_hold = maxf(0.0, slam_hold - dt)
 	velocity.y -= (20.0 if bool(state.get("bounce_pending",false)) or not airborne else FloatRules.AIR_GRAVITY)*dt

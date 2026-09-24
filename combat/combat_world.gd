@@ -117,8 +117,44 @@ func _simulate_players(delta: float) -> void:
 			continue
 		if round_reset_at>0 and state.kind=="player": continue
 		if now_ms()-int(state.get("last_input",0))>200: state.move = Vector3.ZERO
+		var was_dashing := float(state.get("dash",0.0))>0.0
 		Motion.step(state.body,state,state.move,delta,obstacles[id])
+		if state.kind=="player" and was_dashing and not bool(state.get("dash_hit",false)):
+			_resolve_dash_contact(id)
 		_release_buffered_attack(id)
+
+func _resolve_dash_contact(attacker_id: String) -> void:
+	var attacker: Dictionary = entities[attacker_id]
+	var direction: Vector3 = attacker.get("dash_direction",Vector3.FORWARD)
+	var best_id := ""
+	var best_distance := INF
+	for victim_id in entities.keys():
+		if victim_id==attacker_id: continue
+		var victim: Dictionary = entities[victim_id]
+		if bool(victim.get("dead",false)) or int(victim.get("health",0))<=0 or float(victim.get("protection",0.0))>0.0: continue
+		var offset: Vector3 = victim.position-attacker.position
+		if absf(offset.y)>2.2: continue
+		offset.y = 0.0
+		var distance := offset.length()
+		if distance>1.25 or (distance>0.15 and offset.normalized().dot(direction)<=0.15): continue
+		if distance<best_distance:
+			best_distance = distance
+			best_id = victim_id
+	if best_id.is_empty(): return
+	var victim: Dictionary = entities[best_id]
+	var combat_state = CombatStateData.new()
+	combat_state.health = int(victim.health)
+	combat_state.max_health = int(victim.max_health)
+	var resolved = CombatResolverData.resolve_hit(combat_state,"雨伞",AttackCatalogData.PROFILE_PVP)
+	var velocity: Vector3 = victim.get("velocity",Vector3.ZERO)
+	velocity.x = direction.x*3.0
+	velocity.z = direction.z*3.0
+	var hit := {"attacker_id":attacker_id,"victim_id":best_id,"attack":"dash","attack_seq":int(attacker.get("dash_seq",-1)),"serial":int(attacker.get("dash_serial",0)),"order":0,"damage":int(resolved.damage),"stun":0.15,"presented":{"velocity":velocity,"juggled":bool(victim.get("juggled",false)),"kick_bounce":bool(victim.get("kick_bounce",false)),"bounce_pending":bool(victim.get("bounce_pending",false)),"knockdown":false},"rank":0,"juggled_before":bool(victim.get("juggled",false))}
+	attacker.dash_hit = true
+	attacker.dash = 0.0
+	attacker.velocity.x = 0.0
+	attacker.velocity.z = 0.0
+	_commit_hits([hit])
 
 func dynamic_blockers(id: String) -> Array:
 	var result: Array = []
@@ -346,6 +382,10 @@ func _resolve_attack(attacker_id: String, intent_id: String, at_hit_frame := fal
 				_deny_attack(attacker_id, attack_seq)
 				return
 			attacker.dash = 0.38
+			attacker.dash_hit = false
+			attacker.dash_seq = attack_seq
+			attacker.dash_serial = next_action_serial
+			next_action_serial += 1
 			attacker.dash_direction = attack_direction
 			attacker.facing = attack_direction
 			attacker.dash_ready = now + BattleRules.cooldown_ms("dash")

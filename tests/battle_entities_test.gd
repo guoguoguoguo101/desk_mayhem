@@ -45,6 +45,33 @@ func run() -> void:
 	place(dummy,Vector3(0,0.96,0))
 	await physics_frame
 	await physics_frame
+	# Action lock limits speed but does not freeze translation or turn the attack.
+	place(a,Vector3(-12,0.96,0))
+	entities[a].velocity = Vector3.ZERO
+	entities[a].facing = Vector3.RIGHT
+	entities[a].action = "punch_light"
+	entities[a].lock = 0.3
+	Motion.step(entities[a].body,entities[a],Vector3.RIGHT)
+	check(entities[a].position.x > -12.0 and entities[a].facing==Vector3.RIGHT,"punch can advance during action lock")
+	place(a,Vector3(-12,0.96,0))
+	entities[a].velocity = Vector3.ZERO
+	entities[a].action = "umbrella_spin"
+	entities[a].lock = 0.45
+	Motion.step(entities[a].body,entities[a],Vector3.RIGHT)
+	check(entities[a].position.x > -12.0,"spin can advance during action lock")
+	place(a,Vector3(-12,0.96,0))
+	entities[a].velocity = Vector3.ZERO
+	entities[a].stun = 0.2
+	Motion.step(entities[a].body,entities[a],Vector3.RIGHT)
+	check(is_equal_approx(entities[a].position.x,-12.0),"hitstun still blocks voluntary movement")
+	place(a,Vector3(-12,2.0,0))
+	entities[a].stun = 0.0
+	entities[a].action = "punch_light"
+	entities[a].velocity = Vector3(5,0,0)
+	Motion.step(entities[a].body,entities[a],Vector3.ZERO)
+	check(entities[a].velocity.x>4.9,"air punch keeps forward momentum")
+	entities[a].action = ""
+	entities[a].lock = 0.0
 	# Walking and a full dash stop in front of the live dummy.
 	place(a,Vector3(-4,0.96,0))
 	for i in 90:
@@ -61,6 +88,19 @@ func run() -> void:
 	check(entities[a].action=="umbrella_uppercut","second Q selected on server")
 	_resolve_attack(a,entities[a].action,true,entities[a].action_direction)
 	check(entities[dummy].juggled and entities[dummy].velocity.y>9,"Q Q launches dummy")
+	_respawn_entity(entities[dummy])
+	_respawn_entity(entities[a])
+	place(dummy,Vector3(0,0.96,0))
+	place(a,Vector3(-3,0.96,0))
+	entities[a].facing = Vector3.RIGHT
+	var dash_input := {"entity_id":a,"seq":1,"tick":sim.server_tick+1,"round_id":sim.round_id,"life":int(entities[a].life),"move":Vector3.ZERO,"aim":Vector3.RIGHT,"actions":[{"attack_seq":1,"attack":"umbrella_primary","aim":Vector3.RIGHT}]}
+	sim.step([dash_input])
+	var dash_hits := 0
+	for i in 30:
+		for event in sim.step():
+			if event.get("type","")=="combat" and event.get("attack","")=="dash": dash_hits += 1
+	check(dash_hits==1 and int(entities[dummy].health)==1988,"dash contact damages dummy exactly once")
+	check(entities[a].position.x < -0.9,"dash contact stops in front of dummy")
 	_respawn_entity(entities[dummy])
 	_respawn_entity(entities[a])
 	place(dummy,Vector3(0,0.96,0))
