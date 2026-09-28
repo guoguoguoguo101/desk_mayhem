@@ -463,14 +463,14 @@ func warm_light(on: bool) -> void:
 			saved_sun_color = sun.light_color
 			saved_sun_energy = sun.light_energy
 			sun.light_color = Color(1.0, 0.86, 0.68)
-			sun.light_energy = 1.2
+			sun.light_energy = 0.78
 		if world and world.environment:
 			saved_bg = world.environment.background_color
 			saved_ambient = world.environment.ambient_light_color
 			saved_ambient_energy = world.environment.ambient_light_energy
 			world.environment.background_color = Color(0.55, 0.68, 0.82)
 			world.environment.ambient_light_color = Color(1.0, 0.9, 0.76)
-			world.environment.ambient_light_energy = 0.38
+			world.environment.ambient_light_energy = 0.22
 		light_saved = true
 		return
 	if not light_saved:

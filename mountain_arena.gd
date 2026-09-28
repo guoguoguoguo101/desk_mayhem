@@ -99,6 +99,7 @@ func place_arena_floor() -> void:
 	_floor_piece(root, cache, "arena_transition_right", Vector3(-6.7, ARENA_FLOOR_Y, 0), 0.0)
 	_floor_piece(root, cache, "arena_transition_left", Vector3(0, ARENA_FLOOR_Y, -6.7), PI * 0.5)
 	_floor_piece(root, cache, "arena_transition_right", Vector3(0, ARENA_FLOOR_Y, 6.7), PI * 0.5)
+	_floor_piece(root, cache, "arena_notch_ring", Vector3(0, ARENA_FLOOR_Y, 0), 0.0)
 	var variants := ["floor_tile_A", "floor_tile_B", "floor_tile_C"]
 	for ix in range(-9, 10):
 		for iz in range(-9, 10):

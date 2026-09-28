@@ -1607,5 +1607,32 @@ def _share_textures():
     module.main([os.path.join(ROOT, "assets", "environment")])
 
 
+def _keep_rock_rear():
+    # build_rock_kit.py owns these pieces. A full arena rebuild rewrites the catalog.
+    extra_path = os.path.join(ROOT, "assets", "environment", "rock_kit", "catalog_extra.json")
+    rear_path = os.path.join(ROOT, "assets", "environment", "rock_kit", "rear_placements.json")
+    if not (os.path.exists(extra_path) and os.path.exists(rear_path)):
+        return
+    with open(extra_path, encoding="utf-8") as handle:
+        extra = json.load(handle)
+    with open(rear_path, encoding="utf-8") as handle:
+        rear = json.load(handle)
+    ids = {item["id"] for item in extra}
+    with open(CATALOG_PATH, encoding="utf-8") as handle:
+        catalog_doc = json.load(handle)
+    catalog_doc["kits"] = [item for item in catalog_doc["kits"] if item["id"] not in ids] + extra
+    with open(CATALOG_PATH, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(catalog_doc, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    with open(PLACEMENTS_PATH, encoding="utf-8") as handle:
+        placed = json.load(handle)
+    placed["placements"] = [item for item in placed["placements"] if item.get("kit") not in ids] + rear
+    with open(PLACEMENTS_PATH, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(placed, handle, ensure_ascii=False)
+        handle.write("\n")
+    print("ROCK_REAR_KEPT kits=%d placements=%d" % (len(extra), len(rear)))
+
+
+_keep_rock_rear()
 _share_textures()
 print("MOUNTAIN_ARENA_BUILT kits=%d placements=%d shell=%s" % (len(KIT_DEFS), len(placements), SHELL_OBJ_PATH))

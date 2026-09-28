@@ -406,6 +406,354 @@ def build_transition(materials, side):
     return assign(finish(bm), materials)
 
 
+# Cells the square grid skips because they cross the 12 m circle or a cardinal
+# transition. The kept part is the square outside the circle, with a concave arc
+# so the paving meets the ring instead of leaving a sawtooth gap.
+NOTCH_RADIUS = ARENA_RADIUS
+TRANSITION_FOOTPRINTS = (
+    (6.1, -0.6, 7.3, 0.6),
+    (-7.3, -0.6, -6.1, 0.6),
+    (-0.6, -7.3, 0.6, -6.1),
+    (-0.6, 6.1, 0.6, 7.3),
+)
+
+
+def _tile_center_fits(x, z):
+    if math.hypot(x, z) < 6.32:
+        return False
+    for corner_x in (x - 0.5, x + 0.5):
+        for corner_z in (z - 0.5, z + 0.5):
+            if math.hypot(corner_x, corner_z) > 9.65:
+                return False
+    for site_x, site_z in ((6.7, 0.0), (-6.7, 0.0), (0.0, -6.7), (0.0, 6.7)):
+        if abs(x - site_x) < 1.1 and abs(z - site_z) < 1.1:
+            return False
+    return True
+
+
+def _poly_area(poly):
+    area = 0.0
+    for i, point in enumerate(poly):
+        nxt = poly[(i + 1) % len(poly)]
+        area += point[0] * nxt[1] - nxt[0] * point[1]
+    return area * 0.5
+
+
+def _push_point(poly, point):
+    if poly and math.hypot(poly[-1][0] - point[0], poly[-1][1] - point[1]) < 1e-5:
+        return
+    poly.append(point)
+
+
+def _circle_times(a, b, radius):
+    ax, az = a
+    bx, bz = b
+    dx, dz = bx - ax, bz - az
+    quad_a = dx * dx + dz * dz
+    if quad_a < 1e-14:
+        return []
+    quad_b = 2.0 * (ax * dx + az * dz)
+    quad_c = ax * ax + az * az - radius * radius
+    disc = quad_b * quad_b - 4.0 * quad_a * quad_c
+    if disc < 1e-10:
+        return []
+    root = math.sqrt(disc)
+    times = []
+    for t in ((-quad_b - root) / (2.0 * quad_a), (-quad_b + root) / (2.0 * quad_a)):
+        if 1e-5 < t < 1.0 - 1e-5:
+            times.append(t)
+    return sorted(times)
+
+
+def _lerp(a, b, t):
+    return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+
+
+def _in_cell(point, cx, cz, half=0.5):
+    return cx - half - 1e-4 <= point[0] <= cx + half + 1e-4 and cz - half - 1e-4 <= point[1] <= cz + half + 1e-4
+
+
+def _arc_points(start, end, cx, cz, radius):
+    a0 = math.atan2(start[1], start[0])
+    a1 = math.atan2(end[1], end[0])
+    sweep = (a1 - a0) % (2.0 * math.pi)
+    options = []
+    for delta in (sweep, sweep - 2.0 * math.pi):
+        if abs(delta) < 1e-5:
+            continue
+        mid_angle = a0 + delta * 0.5
+        mid = (math.cos(mid_angle) * radius, math.sin(mid_angle) * radius)
+        if _in_cell(mid, cx, cz):
+            options.append(delta)
+    if not options:
+        return []
+    delta = min(options, key=abs)
+    steps = max(2, int(math.ceil(abs(delta) / math.radians(6.0))))
+    return [
+        (math.cos(a0 + delta * i / steps) * radius, math.sin(a0 + delta * i / steps) * radius)
+        for i in range(1, steps)
+    ]
+
+
+def _square_outside_circle(cx, cz, radius):
+    half = 0.5
+    corners = (
+        (cx - half, cz - half),
+        (cx + half, cz - half),
+        (cx + half, cz + half),
+        (cx - half, cz + half),
+    )
+    outside = lambda point: point[0] * point[0] + point[1] * point[1] >= radius * radius - 1e-8
+    on_circle = lambda point: abs(math.hypot(point[0], point[1]) - radius) < 1e-3
+    spans = []
+    for index in range(4):
+        start = corners[index]
+        end = corners[(index + 1) % 4]
+        times = [0.0] + _circle_times(start, end, radius) + [1.0]
+        for left, right in zip(times, times[1:]):
+            if right - left < 1e-6:
+                continue
+            spans.append((_lerp(start, end, left), outside(_lerp(start, end, (left + right) * 0.5)), _lerp(start, end, right)))
+    poly = []
+    arc_from = None
+    for start, is_outside, end in spans:
+        if is_outside:
+            if arc_from is not None:
+                for point in _arc_points(arc_from, start, cx, cz, radius):
+                    _push_point(poly, point)
+                arc_from = None
+            _push_point(poly, start)
+            _push_point(poly, end)
+        elif arc_from is None and on_circle(start):
+            arc_from = start
+    if arc_from is not None and poly:
+        for point in _arc_points(arc_from, poly[0], cx, cz, radius):
+            _push_point(poly, point)
+    if len(poly) >= 2 and math.hypot(poly[0][0] - poly[-1][0], poly[0][1] - poly[-1][1]) < 1e-5:
+        poly.pop()
+    if len(poly) < 3 or abs(_poly_area(poly)) < 0.004:
+        return []
+    if _poly_area(poly) < 0.0:
+        poly.reverse()
+    return [poly]
+
+
+def _point_in_poly(point, poly):
+    x, z = point
+    inside = False
+    for index, start in enumerate(poly):
+        end = poly[(index + 1) % len(poly)]
+        if (start[1] > z) != (end[1] > z):
+            cross_x = (end[0] - start[0]) * (z - start[1]) / (end[1] - start[1]) + start[0]
+            if x < cross_x:
+                inside = not inside
+    if inside:
+        return True
+    for index, start in enumerate(poly):
+        end = poly[(index + 1) % len(poly)]
+        dx, dz = end[0] - start[0], end[1] - start[1]
+        length = math.hypot(dx, dz)
+        if length < 1e-8:
+            continue
+        t = max(0.0, min(1.0, ((x - start[0]) * dx + (z - start[1]) * dz) / (length * length)))
+        if math.hypot(start[0] + dx * t - x, start[1] + dz * t - z) < 1e-4:
+            return True
+    return False
+
+
+def _on_segment(point, start, end):
+    dx, dz = end[0] - start[0], end[1] - start[1]
+    length = math.hypot(dx, dz)
+    if length < 1e-8:
+        return math.hypot(point[0] - start[0], point[1] - start[1]) < 1e-4
+    t = ((point[0] - start[0]) * dx + (point[1] - start[1]) * dz) / (length * length)
+    if t < -1e-4 or t > 1.0 + 1e-4:
+        return False
+    return math.hypot(start[0] + dx * t - point[0], start[1] + dz * t - point[1]) < 1e-4
+
+
+def _rect_times(start, end, rect):
+    x0, z0, x1, z1 = rect
+    times = [0.0, 1.0]
+    dx, dz = end[0] - start[0], end[1] - start[1]
+    for value, delta, origin in ((x0, dx, start[0]), (x1, dx, start[0]), (z0, dz, start[1]), (z1, dz, start[1])):
+        if abs(delta) < 1e-10:
+            continue
+        t = (value - origin) / delta
+        if 1e-5 < t < 1.0 - 1e-5:
+            times.append(t)
+    times = sorted(set(round(t, 6) for t in times))
+    return times
+
+
+def _in_rect(point, rect):
+    return rect[0] - 1e-5 <= point[0] <= rect[2] + 1e-5 and rect[1] - 1e-5 <= point[1] <= rect[3] + 1e-5
+
+
+def _rect_bridge(start, end, rect, poly):
+    x0, z0, x1, z1 = rect
+    corners = ((x0, z0), (x1, z0), (x1, z1), (x0, z1))
+
+    def locate(point):
+        for index in range(4):
+            if _on_segment(point, corners[index], corners[(index + 1) % 4]):
+                return index
+        return None
+
+    start_edge = locate(start)
+    end_edge = locate(end)
+    if start_edge is None or end_edge is None or start_edge == end_edge:
+        return []
+    options = []
+    for step in (1, -1):
+        path = []
+        edge = start_edge
+        for _ in range(4):
+            nxt = (edge + step) % 4
+            corner = corners[nxt if step > 0 else edge]
+            if not _point_in_poly(corner, poly):
+                path = None
+                break
+            path.append(corner)
+            edge = nxt
+            if edge == end_edge:
+                break
+        if path is not None and edge == end_edge:
+            options.append(path)
+    if not options:
+        return []
+    return min(options, key=len)
+
+
+def _on_rect_boundary(point, rect):
+    x, z = point
+    x0, z0, x1, z1 = rect
+    on_x = abs(x - x0) < 1e-4 or abs(x - x1) < 1e-4
+    on_z = abs(z - z0) < 1e-4 or abs(z - z1) < 1e-4
+    return (on_x and z0 - 1e-4 <= z <= z1 + 1e-4) or (on_z and x0 - 1e-4 <= x <= x1 + 1e-4)
+
+
+def _subtract_rect(poly, rect):
+    spans = []
+    hits = False
+    for index in range(len(poly)):
+        start = poly[index]
+        end = poly[(index + 1) % len(poly)]
+        times = _rect_times(start, end, rect)
+        for left, right in zip(times, times[1:]):
+            if right - left < 1e-6:
+                continue
+            mid = _lerp(start, end, (left + right) * 0.5)
+            inside = _in_rect(mid, rect)
+            hits = hits or inside
+            spans.append((_lerp(start, end, left), inside, _lerp(start, end, right)))
+    if not hits:
+        return [poly]
+    result = []
+    bridge_from = None
+    for start, inside, end in spans:
+        if not inside:
+            if bridge_from is not None:
+                for point in _rect_bridge(bridge_from, start, rect, poly):
+                    _push_point(result, point)
+                bridge_from = None
+            _push_point(result, start)
+            _push_point(result, end)
+        elif bridge_from is None and _on_rect_boundary(start, rect):
+            bridge_from = start
+    if bridge_from is not None and result:
+        for point in _rect_bridge(bridge_from, result[0], rect, poly):
+            _push_point(result, point)
+    if len(result) >= 2 and math.hypot(result[0][0] - result[-1][0], result[0][1] - result[-1][1]) < 1e-5:
+        result.pop()
+    if len(result) < 3 or abs(_poly_area(result)) < 0.004:
+        return []
+    if _poly_area(result) < 0.0:
+        result.reverse()
+    return [result]
+
+
+def _notch_polygons():
+    pieces = []
+    for ix in range(-9, 10):
+        for iz in range(-9, 10):
+            cx = float(ix) + 0.5
+            cz = float(iz) + 0.5
+            if _tile_center_fits(cx, cz):
+                continue
+            if any(math.hypot(cx + dx, cz + dz) > 9.65 for dx in (-0.5, 0.5) for dz in (-0.5, 0.5)):
+                continue
+            polygons = _square_outside_circle(cx, cz, NOTCH_RADIUS)
+            for rect in TRANSITION_FOOTPRINTS:
+                cut = []
+                for poly in polygons:
+                    cut.extend(_subtract_rect(poly, rect))
+                polygons = cut
+            pieces.extend(polygons)
+    return pieces
+
+
+def _ear_clip(points):
+    index = list(range(len(points)))
+    triangles = []
+
+    def cross(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    def contains(point, a, b, c):
+        return cross(a, b, point) >= -1e-8 and cross(b, c, point) >= -1e-8 and cross(c, a, point) >= -1e-8
+
+    guard = 0
+    while len(index) > 3 and guard < 2000:
+        guard += 1
+        clipped = False
+        count = len(index)
+        for i in range(count):
+            i0 = index[(i - 1) % count]
+            i1 = index[i]
+            i2 = index[(i + 1) % count]
+            a, b, c = points[i0], points[i1], points[i2]
+            if cross(a, b, c) <= 1e-10:
+                continue
+            if any(contains(points[other], a, b, c) for other in index if other not in (i0, i1, i2)):
+                continue
+            triangles.append((i0, i1, i2))
+            del index[i]
+            clipped = True
+            break
+        if not clipped:
+            break
+    if len(index) == 3:
+        triangles.append((index[0], index[1], index[2]))
+    return triangles, len(index) == 3 or len(index) < 3
+
+
+def build_notch_ring(materials):
+    bm = bmesh.new()
+    uv = uv_of(bm)
+    pieces = _notch_polygons()
+    kept = 0
+    for poly in pieces:
+        blender_pts = [(point[0], -point[1]) for point in poly]
+        if _poly_area(blender_pts) < 0.0:
+            blender_pts.reverse()
+        triangles, closed = _ear_clip(blender_pts)
+        if not closed or not triangles:
+            print("NOTCH_SKIP", len(blender_pts))
+            continue
+        top = [bm.verts.new((x, y, SLAB_HEIGHT)) for x, y in blender_pts]
+        bottom = [bm.verts.new((x, y, 0.0)) for x, y in blender_pts]
+        for i0, i1, i2 in triangles:
+            add_face(bm, [top[i0], top[i1], top[i2]], uv, MAT_LIGHT)
+            add_face(bm, [bottom[i2], bottom[i1], bottom[i0]], uv, MAT_LIGHT)
+        count = len(blender_pts)
+        for i in range(count):
+            add_face(bm, [top[i], bottom[i], bottom[(i + 1) % count], top[(i + 1) % count]], uv, MAT_LIGHT)
+        kept += 1
+    print("NOTCH_PIECES %d" % kept)
+    return assign(finish(bm), materials)
+
+
 def build_floor_tile(materials, variant):
     bm = bmesh.new()
     uv = uv_of(bm)
@@ -561,6 +909,7 @@ def main():
     tile_a = link_object(groups["SquareTiles"], "floor_tile_A", build_floor_tile(materials, "A"))
     tile_b = link_object(groups["SquareTiles"], "floor_tile_B", build_floor_tile(materials, "B"))
     tile_c = link_object(groups["SquareTiles"], "floor_tile_C", build_floor_tile(materials, "C"))
+    notch = link_object(groups["SquareTiles"], "arena_notch_ring", build_notch_ring(materials))
 
     masters = [
         (center, "arena_center.glb"),
@@ -600,11 +949,14 @@ def main():
     # Masters stay put. Hide them during the preview render so the circle is not drawn twice.
     for obj, _filename in masters:
         obj.hide_render = obj is not center
+    notch.hide_render = False
     render_previews()
     for obj, _filename in masters:
         obj.hide_render = False
     for obj, filename in masters:
         export_glb(obj, filename)
+    print("TRIS %s %d" % (notch.name, tri_count(notch.data)))
+    export_glb(notch, "arena_notch_ring.glb")
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT_DIR, "arena_floor.blend"))
     _share_textures()
     print("ARENA_FLOOR_BUILT %s" % OUT_DIR)

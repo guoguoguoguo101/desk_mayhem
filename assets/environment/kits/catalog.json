@@ -254,6 +254,180 @@
       "file": "paving_corner.glb",
       "origin": "base",
       "description": "青灰 L 形转角砖，外框 2 米、臂宽 1 米、厚 0.15 米，缺角在 Godot +X/−Z，原点在底面中心"
+    },
+    {
+      "id": "rock_base_01",
+      "file": "rock_base_01.glb",
+      "origin": "base",
+      "description": "宽岩脚，适合山脚和中段，原点在视觉着地中心，地面以下是穿插榫"
+    },
+    {
+      "id": "rock_base_02",
+      "file": "rock_base_02.glb",
+      "origin": "base",
+      "description": "高瘦岩柱，适合尖峰核心，原点在视觉着地中心"
+    },
+    {
+      "id": "rock_base_03",
+      "file": "rock_base_03.glb",
+      "origin": "base",
+      "description": "中等岩柱，顶部略平，可叠松树，原点在视觉着地中心"
+    },
+    {
+      "id": "rock_base_04",
+      "file": "rock_base_04.glb",
+      "origin": "base",
+      "description": "断裂岩壁，大断面朝局部 +Y，原点在视觉着地中心"
+    },
+    {
+      "id": "rock_base_05",
+      "file": "rock_base_05.glb",
+      "origin": "base",
+      "description": "阶梯岩体，原点在视觉着地中心"
+    },
+    {
+      "id": "rock_base_06",
+      "file": "rock_base_06.glb",
+      "origin": "base",
+      "description": "悬挑岩体，挑出方向是局部 +X，原点在视觉着地中心"
+    },
+    {
+      "id": "rock_base_07",
+      "file": "rock_base_07.glb",
+      "origin": "base",
+      "description": "平顶岩台，可放建筑、松或竹，原点在视觉着地中心"
+    },
+    {
+      "id": "rock_base_08",
+      "file": "rock_base_08.glb",
+      "origin": "base",
+      "description": "三块小碎石，原点在簇中心的地面"
+    },
+    {
+      "id": "rock_base_09",
+      "file": "rock_base_09.glb",
+      "origin": "base",
+      "description": "尖顶岩锥，适合远峰顶部，原点在视觉着地中心"
+    },
+    {
+      "id": "rock_base_10",
+      "file": "rock_base_10.glb",
+      "origin": "base",
+      "description": "山脊连接块，长轴沿局部 X，两端和底部是穿插榫"
+    },
+    {
+      "id": "pine_trunk_01",
+      "file": "pine_trunk_01.glb",
+      "origin": "base",
+      "description": "较直的松干，原点在根部"
+    },
+    {
+      "id": "pine_trunk_02",
+      "file": "pine_trunk_02.glb",
+      "origin": "base",
+      "description": "迎客松树干，向局部 +X 倾斜，原点在根部"
+    },
+    {
+      "id": "pine_crown_01",
+      "file": "pine_crown_01.glb",
+      "origin": "base",
+      "description": "横向展开的松冠，原点在与树干的连接处"
+    },
+    {
+      "id": "pine_crown_02",
+      "file": "pine_crown_02.glb",
+      "origin": "base",
+      "description": "伞状松冠，原点在连接处"
+    },
+    {
+      "id": "pine_crown_03",
+      "file": "pine_crown_03.glb",
+      "origin": "base",
+      "description": "偏斜松冠，重心在局部 +X，原点在连接处"
+    },
+    {
+      "id": "shrub_01",
+      "file": "shrub_01.glb",
+      "origin": "base",
+      "description": "低矮圆灌木，原点在根部"
+    },
+    {
+      "id": "shrub_02",
+      "file": "shrub_02.glb",
+      "origin": "base",
+      "description": "更扁的灌木，原点在根部"
+    },
+    {
+      "id": "vine_01",
+      "file": "vine_01.glb",
+      "origin": "base",
+      "description": "崖壁垂藤，原点在上方悬挂点"
+    },
+    {
+      "id": "bamboo_01",
+      "file": "bamboo_01.glb",
+      "origin": "base",
+      "description": "小竹丛，叶是叶片簇，原点在根部"
+    },
+    {
+      "id": "bamboo_02",
+      "file": "bamboo_02.glb",
+      "origin": "base",
+      "description": "中竹丛，叶是叶片簇，原点在根部"
+    },
+    {
+      "id": "bamboo_03",
+      "file": "bamboo_03.glb",
+      "origin": "base",
+      "description": "高竹丛，叶是叶片簇，原点在根部"
+    },
+    {
+      "id": "cliff_combo_01",
+      "file": "cliff_combo_01.glb",
+      "origin": "base",
+      "description": "宽岩壁、岩柱和松树的组合，原点在地面"
+    },
+    {
+      "id": "cliff_combo_02",
+      "file": "cliff_combo_02.glb",
+      "origin": "base",
+      "description": "阶梯岩体和松树的组合，原点在地面"
+    },
+    {
+      "id": "cliff_combo_03",
+      "file": "cliff_combo_03.glb",
+      "origin": "base",
+      "description": "悬挑岩体和小碎石的组合，原点在地面"
+    },
+    {
+      "id": "peak_combo_01",
+      "file": "peak_combo_01.glb",
+      "origin": "base",
+      "description": "多根高瘦岩柱组成的主峰，原点在地面"
+    },
+    {
+      "id": "peak_combo_02",
+      "file": "peak_combo_02.glb",
+      "origin": "base",
+      "description": "中型岩柱和山脊组成的连峰，原点在地面"
+    },
+    {
+      "id": "peak_combo_03",
+      "file": "peak_combo_03.glb",
+      "origin": "base",
+      "description": "尖峰加山脊连接块，原点在地面"
+    },
+    {
+      "id": "pine_cliff_01",
+      "file": "pine_cliff_01.glb",
+      "origin": "base",
+      "description": "岩台和迎客松，原点在地面"
+    },
+    {
+      "id": "bamboo_platform_01",
+      "file": "bamboo_platform_01.glb",
+      "origin": "base",
+      "description": "岩台和竹丛，原点在地面"
     }
   ]
 }
