@@ -8,6 +8,10 @@ const ARENA_FLOOR_DIR := "res://assets/environment/arena_floor/"
 const ARENA_FLOOR_Y := 0.045
 
 var built := false
+var floor_materials: Dictionary = {}
+var floor_albedo: Texture2D
+var floor_material_template: StandardMaterial3D
+var floor_rng := RandomNumberGenerator.new()
 
 func _ready() -> void:
 	name = "MountainArena"
@@ -25,6 +29,8 @@ func build() -> void:
 	else:
 		place_kits()
 	place_arena_floor()
+	var paving := preload("res://courtyard_paving.gd").new()
+	add_child(paving)
 	for entry in Layout.collision_entries():
 		add_layout_collider(entry)
 
@@ -67,6 +73,9 @@ func place_kits() -> void:
 	var cache := {}
 	for item in parsed.get("placements", []):
 		var kit_id := str(item.get("kit", ""))
+		# These four samples now form the courtyard paving; avoid duplicate surfaces.
+		if kit_id in ["paving_square", "paving_square_crack", "paving_rect", "paving_corner"]:
+			continue
 		var packed: PackedScene = cached_kit(cache, kit_id)
 		if packed == null:
 			continue
@@ -81,6 +90,8 @@ func place_kits() -> void:
 		add_child(node)
 
 func place_arena_floor() -> void:
+	# Stable appearance across clients and scene reloads.
+	floor_rng.seed = 29417
 	var root := Node3D.new()
 	root.name = "ArenaFloor"
 	add_child(root)
@@ -107,7 +118,7 @@ func place_arena_floor() -> void:
 			var z := float(iz) + 0.5
 			if not _floor_tile_fits(x, z):
 				continue
-			_floor_piece(root, cache, variants[posmod(ix + iz * 2, 3)], Vector3(x, ARENA_FLOOR_Y, z), 0.0)
+			_floor_piece(root, cache, variants[floor_rng.randi_range(0, 2)], Vector3(x, ARENA_FLOOR_Y, z), float(floor_rng.randi_range(0, 3)) * PI * 0.5)
 
 func _floor_piece(root: Node3D, cache: Dictionary, piece: String, at: Vector3, yaw: float) -> void:
 	if not cache.has(piece):
@@ -124,6 +135,78 @@ func _floor_piece(root: Node3D, cache: Dictionary, piece: String, at: Vector3, y
 	node.position = at
 	node.rotation.y = yaw
 	root.add_child(node)
+	_apply_floor_stone(node, floor_rng.randi_range(0, 23))
+
+func _apply_floor_stone(node: Node, variant: int) -> void:
+	# Imported GLBs embed the old texture: override only this arena's floor instances.
+	if node is MeshInstance3D and node.mesh != null:
+		for surface in node.mesh.get_surface_count():
+			var original: Material = node.mesh.surface_get_material(surface)
+			if original == null:
+				continue
+			var category := String(original.resource_name)
+			if category not in ["M_Stone_Light", "M_Stone_Dark", "M_Gold_Trim"]:
+				continue
+			var key := category + str(variant)
+			if not floor_materials.has(key):
+				if floor_albedo == null:
+					floor_albedo = load(ARENA_FLOOR_DIR + "textures/slate_moss_albedo.png")
+					# Also cover fresh checkouts whose default PNG import has no mipmaps.
+					var pixels := floor_albedo.get_image()
+					if not pixels.has_mipmaps():
+						if pixels.is_compressed():
+							pixels.decompress()
+						pixels.generate_mipmaps()
+						floor_albedo = ImageTexture.create_from_image(pixels)
+				if floor_material_template == null:
+					floor_material_template = _sample_paving_material()
+				var stone := floor_material_template.duplicate() as StandardMaterial3D
+				stone.resource_name = "WeatheredSlate_" + key
+				stone.albedo_texture = floor_albedo
+				# Arena UVs tile beyond 0..1; the sample's clamped UVs would smear edges.
+				stone.texture_repeat = true
+				# Different crops create quiet, lightly cracked and weathered slabs.
+				var rng := RandomNumberGenerator.new()
+				rng.seed = 8317 + variant * 173
+				var scale_uv := rng.randf_range(0.45, 0.95)
+				var offset := Vector3(rng.randf(), rng.randf(), 0)
+				if variant % 4 == 0:
+					# A clean patch of the source, without the branching mossy cracks.
+					scale_uv = 0.12
+					offset = Vector3(0.65, 0.10, 0)
+				stone.uv1_scale = Vector3(scale_uv * (-1.0 if variant % 2 else 1.0), scale_uv, 1)
+				stone.uv1_offset = offset
+				if category == "M_Stone_Dark":
+					# Recessed medallion / ornamental band needs contrast with its relief.
+					stone.albedo_color = Color(0.60, 0.60, 0.60)
+				elif category == "M_Gold_Trim":
+					# Quiet pale stone inlay keeps the concentric rails legible.
+					stone.uv1_scale = Vector3(0.10, 0.10, 1)
+					stone.uv1_offset = Vector3(0.65, 0.10, 0)
+				floor_materials[key] = stone
+			node.set_surface_override_material(surface, floor_materials[key])
+	for child in node.get_children():
+		_apply_floor_stone(child, variant)
+
+func _sample_paving_material() -> StandardMaterial3D:
+	# Inherit Godot's imported sample material, including specular conversion.
+	var packed := load(KIT_DIR + "paving_square.glb") as PackedScene
+	if packed != null:
+		var sample := packed.instantiate()
+		for mesh_node in sample.find_children("*", "MeshInstance3D", true, false):
+			for surface in mesh_node.mesh.get_surface_count():
+				var source: Material = mesh_node.mesh.surface_get_material(surface)
+				if source is StandardMaterial3D and source.resource_name == "paving_square":
+					var result := source.duplicate() as StandardMaterial3D
+					sample.free()
+					return result
+		sample.free()
+	push_warning("Sample paving material unavailable; using neutral stone fallback.")
+	var fallback := StandardMaterial3D.new()
+	fallback.roughness = 0.84
+	fallback.metallic_specular = 0.32
+	fallback.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return fallback
 
 func _floor_tile_fits(x: float, z: float) -> bool:
 	if Vector2(x, z).length() < 6.32:

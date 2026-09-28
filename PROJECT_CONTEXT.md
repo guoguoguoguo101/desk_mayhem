@@ -84,7 +84,7 @@ Godot 4 的第三人称 3D 乱斗原型：玩家控制一只卡通狐狸，在�
 
 - **办公室练习场**：`office_demo.tscn` 中的 110×80 地面、围墙、办公桌、会议区、茶水区、箱子与 16 个稻草人；由 `make_scene.py` 生成。
 - **比武大厅**：`duel_hall.gd` 运行时搭建约 56×44 的中式庭院，切换时隐藏办公室物件；使用 `assets/polyhaven/` 下的贴图。比武大厅有 2 个可被击打的稻草人。
-- **山门演武场**：约 108×88，中央为开阔圆形演武区，北侧大殿、南侧山门、东西亭子，并有竹林、石灯、水池和远山。后山远景是可拼装岩体：`rock_base`、松干、松冠、灌木、垂藤、竹丛，以及崖壁和山峰组合，GLB 在 `assets/environment/kits/`，贴图在 `kits/textures/`，摆在北墙外，不进碰撞。`tools/build_mountain_arena.py` 通过 Blender 5.2 生成场地外壳 `assets/environment/mountain_arena/mountain_arena_shell.obj`，并把竹竿、落叶、碎石、石灯、朱红柱、屋面，以及红枫、杜鹃、粉花灌木、矮篱、牡丹拆成 `assets/environment/kits/` 里的独立 GLB。北侧主殿是重檐歇山的 `main_hall` 构件，配木柱、武字旗和檐下宫灯；瓦、木、石、窗棂、匾额和旗面是生成贴图。花和叶是透明贴图卡片，贴图只放在 `assets/environment/kits/textures/`。构件和演武地砖的 GLB 引用这份贴图，不再把同一张图嵌进每个模型，也不在模型旁边再存一份。杜鹃用按设计图生成的单花、叶枝和花团铺成冠层，其余花草仍由脚本绘制。摆放写在 `kit_placements.json`。演武圈南侧外有一小块青灰地砖样片（两块方砖、一块长砖、一块 L 形转角）。演武圈正中另铺了直径约 12 米的圆形地砖，外接一圈方砖，圆边和方砖之间的空档用圆弧缺角砖补上；模块在 `assets/environment/arena_floor/`，由 `mountain_arena.gd` 直接摆放。外壳上原来的棕色圆盘和两圈橙色环已去掉。这些地砖只作外观，不写入碰撞。权威碰撞来自 `combat/mountain_arena_layout.gd`，主殿仍用原来的盒子，不读取美术网格碰撞。
+- **山门演武场**：约 108×88，中央为开阔圆形演武区，北侧大殿、南侧山门、东西亭子，并有竹林、石灯、水池和远山。后山远景是可拼装岩体：`rock_base`、松干、松冠、灌木、垂藤、竹丛，以及崖壁和山峰组合，GLB 在 `assets/environment/kits/`，贴图在 `kits/textures/`，摆在北墙外，不进碰撞。`tools/build_mountain_arena.py` 通过 Blender 5.2 生成场地外壳 `assets/environment/mountain_arena/mountain_arena_shell.obj`，并把竹竿、落叶、碎石、石灯、朱红柱、屋面，以及红枫、杜鹃、粉花灌木、矮篱、牡丹拆成 `assets/environment/kits/` 里的独立 GLB。北侧主殿是重檐歇山的 `main_hall` 构件，配木柱、武字旗和檐下宫灯；瓦、木、石、窗棂、匾额和旗面是生成贴图。花和叶是透明贴图卡片，贴图只放在 `assets/environment/kits/textures/`。构件和演武地砖的 GLB 引用这份贴图，不再把同一张图嵌进每个模型，也不在模型旁边再存一份。杜鹃用按设计图生成的单花、叶枝和花团铺成冠层，其余花草仍由脚本绘制。摆放写在 `kit_placements.json`。原先演武圈南侧的四块地砖样片已用于铺满浅色内院，详见下方铺砖说明。演武圈正中另铺了直径约 12 米的圆形地砖，外接一圈方砖，圆边和方砖之间的空档用圆弧缺角砖补上；模块在 `assets/environment/arena_floor/`，由 `mountain_arena.gd` 直接摆放。外壳上原来的棕色圆盘和两圈橙色环已去掉。这些地砖只作外观，不写入碰撞。权威碰撞来自 `combat/mountain_arena_layout.gd`，主殿仍用原来的盒子，不读取美术网格碰撞。
 - **联机**：`network_manager.gd` 使用 ENet；主机负责主要的动作/命中判定和状态快照，客户端发送输入并显示同步结果。当前是局域网 IP 加入模式，没有公网房间服务、匹配、账号或完整结算规则。击杀榜统计玩家与大厅稻草人的击倒。
 
 ## 关键文件
@@ -102,6 +102,10 @@ Godot 4 的第三人称 3D 乱斗原型：玩家控制一只卡通狐狸，在�
 | `follow_camera.gd`、`combat_hud.gd`、`combat_feedback.gd` | 镜头、准星/技能栏及打击反馈 |
 
 ## 开发状态与注意事项
+
+2026-09-29 浅色内院铺砖：新增 `courtyard_paving.gd`，仅覆盖 InnerCourt 的 74×56 米矩形（X ±37、Z ±28）。四角用原 `paving_corner` L 形砖，缺口朝内；四边用 `paving_rect` 2×1 米长砖；内部混用 `paving_square` 与 `paving_square_crack`，固定种子选择与直角旋转，保留原模型、UV 和材质。中央现有圆形及周围配套地砖的完整格子轮廓均避让，外围深色地面不变。原四块演示样砖不再单独实例化，避免与铺砖重叠。共 3758 块砖，用 MultiMesh 批量显示，仅作美术，不修改共享碰撞。已验证整片格子覆盖无漏铺、重叠或越界，并查看全景与拐角渲染。
+
+2026-09-29 演武地面材质：`mountain_arena.gd` 对 `ArenaFloor` 地砖使用 `assets/environment/arena_floor/textures/slate_moss_albedo.png`，保留样砖导入材质的粗糙度和反射参数，开启重复铺贴与 mipmap。普通砖面保持中性底色；圆形纹饰的暗底恢复明暗对比，细环使用纹理较干净的浅石嵌边，避免圆环与砖面混成一片。24 组固定种子的 UV 偏移、镜像和尺度组合，让裂痕与苔藓分布有疏密变化；外围方砖另随机选择三种模型及四个直角方向。随机结果在重进和各客户端间保持一致。中央演武地砖的模型轮廓、摆放范围与碰撞不变。GLB 和 Blender 源资产未重写，外观由运行时材质覆盖决定。`tools/preview_arena_floor.gd` 可生成实际渲染预览。
 
 2026-09-25 狐狸角色美术接入：玩家和联机分身的原始几何狗外观已由 `assets/characters/fox.glb` 替换；原有角色碰撞、战斗判定与道具逻辑仍由 `player.gd` 控制。狐狸 GLB 由 Rigify 身体骨架生成后清理为 41 根形变骨骼，含 6 段尾巴和每侧 2 根耳骨，不带动画。`assets/characters/fox_visual.tscn` 在 Godot 中保存 22 段身体动作和一个独立常驻的尾巴耳朵循环，使用 AnimationTree 叠加。狐狸脚底相对角色原点下移 0.85 米，与站立碰撞胶囊底部对齐。当前模型由大量独立网格片组成，大幅抬臂时袖口仍可见接缝；动作和道具手持位置需要实机画面验收。原描述中“角色仍主要由基础几何体构成”只适用于先前版本和其他灰盒角色。
 
