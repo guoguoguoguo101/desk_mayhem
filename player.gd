@@ -11,6 +11,7 @@ const CombatRules = preload("res://combat/combat_resolver.gd")
 const AttackData = preload("res://combat/attack_catalog.gd")
 const HitIntentData = preload("res://combat/hit_intent.gd")
 const HitDetection = preload("res://combat/hit_detector.gd")
+const FOX_VISUAL = preload("res://assets/characters/fox_visual.tscn")
 
 enum Weapon { UMBRELLA, COFFEE, POT, CHAIR }
 
@@ -100,6 +101,7 @@ var cancel_time := 0.0
 var combo_count := 0
 var combo_timer := 0.0
 var punch_index := 0
+var fox_attack_id := ""
 var punch_chain := 0.0
 var stagger_time := 0.0
 var juggled := false
@@ -196,6 +198,11 @@ func _ready() -> void:
 	pot_visual = make_pot_prop()
 	cup_visual = make_cup_prop()
 	cup_visual.position = Vector3(0.18, 0.42, -0.62)
+	# Keep the existing combat props and hit geometry while replacing the
+	# placeholder dog meshes with the skinned fox presentation.
+	for part_name in ["Body", "Head", "Muzzle", "Nose", "EarL", "EyeL", "ArmL", "FootL", "EarR", "EyeR", "ArmR", "FootR", "Collar", "Badge", "Tail"]:
+		visual.get_node(part_name).visible = false
+	visual.add_child(FOX_VISUAL.instantiate())
 	if net_puppet:
 		return
 	aim_marker = MeshInstance3D.new()

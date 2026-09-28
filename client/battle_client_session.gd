@@ -251,6 +251,7 @@ func _sync_views() -> void:
 func _sync_action_pose(body: Node, state: Dictionary) -> void:
 	# Pose phase is derived from simulation time, including correction/cancellation.
 	var attack := str(state.get("action",""))
+	body.fox_attack_id = attack
 	var left := maxf(0,float(int(state.get("end_tick",0))-replay.sim.server_tick)/60.0)
 	body.punch_time = left if BattleRules.is_punch(attack) else 0.0
 	body.kick_time = left if attack=="kick_front" else 0.0
