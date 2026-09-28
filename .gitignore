@@ -1,5 +1,7 @@
 .godot/
 *.import
+# Blender 自动备份
+*.blend1
 _camera_capture.png
 _mechanics_test.gd
 _mechanics_test.gd.uid

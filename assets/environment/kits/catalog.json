@@ -1,0 +1,259 @@
+{
+  "units": "meters",
+  "axis": "Godot Y-up after GLB import",
+  "collision": "none; gameplay shapes stay in combat/mountain_arena_layout.gd",
+  "kits": [
+    {
+      "id": "wood_pillar",
+      "file": "wood_pillar.glb",
+      "origin": "center",
+      "description": "深色木柱，半径 1、高 1，原点在柱心"
+    },
+    {
+      "id": "martial_banner",
+      "file": "martial_banner.glb",
+      "origin": "base",
+      "description": "蓝色武字旗，原点在上方挂杆中心"
+    },
+    {
+      "id": "palace_lantern",
+      "file": "palace_lantern.glb",
+      "origin": "base",
+      "description": "檐下宫灯，原点在挂钩"
+    },
+    {
+      "id": "main_hall",
+      "file": "main_hall.glb",
+      "origin": "base",
+      "description": "演武场北侧主殿，原点在台基中心地面"
+    },
+    {
+      "id": "cinnabar_pillar",
+      "file": "cinnabar_pillar.glb",
+      "origin": "center",
+      "description": "朱红柱，网格半径 1、高 1，原点在柱心"
+    },
+    {
+      "id": "roof_tile",
+      "file": "roof_tile.glb",
+      "origin": "center",
+      "description": "1米见方的屋面构件，按建筑尺寸缩放"
+    },
+    {
+      "id": "roof_ridge",
+      "file": "roof_ridge.glb",
+      "origin": "center",
+      "description": "1米见方的屋面构件，按建筑尺寸缩放"
+    },
+    {
+      "id": "stone_lantern",
+      "file": "stone_lantern.glb",
+      "origin": "base",
+      "description": "石灯整件，原点在地面中心"
+    },
+    {
+      "id": "bamboo_culm_tall",
+      "file": "bamboo_culm_tall.glb",
+      "origin": "base",
+      "description": "高竹竿，叶较疏，原点在根部"
+    },
+    {
+      "id": "bamboo_culm_tall_b",
+      "file": "bamboo_culm_tall_b.glb",
+      "origin": "base",
+      "description": "更高的疏叶竹竿，原点在根部"
+    },
+    {
+      "id": "bamboo_culm_mid",
+      "file": "bamboo_culm_mid.glb",
+      "origin": "base",
+      "description": "中等密叶竹竿，原点在根部"
+    },
+    {
+      "id": "bamboo_culm_mid_b",
+      "file": "bamboo_culm_mid_b.glb",
+      "origin": "base",
+      "description": "较矮的密叶竹竿，原点在根部"
+    },
+    {
+      "id": "bamboo_culm_slim",
+      "file": "bamboo_culm_slim.glb",
+      "origin": "base",
+      "description": "细竹竿，原点在根部"
+    },
+    {
+      "id": "bamboo_culm_shoot",
+      "file": "bamboo_culm_shoot.glb",
+      "origin": "base",
+      "description": "矮笋，原点在根部"
+    },
+    {
+      "id": "bamboo_leaf",
+      "file": "bamboo_leaf.glb",
+      "origin": "base",
+      "description": "一片落叶，叶尖朝局部 +X"
+    },
+    {
+      "id": "bamboo_leaf_young",
+      "file": "bamboo_leaf_young.glb",
+      "origin": "base",
+      "description": "偏黄的落叶，叶尖朝局部 +X"
+    },
+    {
+      "id": "bamboo_rock",
+      "file": "bamboo_rock.glb",
+      "origin": "center",
+      "description": "半径 1 的碎石，原点在球心"
+    },
+    {
+      "id": "maple_large",
+      "file": "maple_large.glb",
+      "origin": "base",
+      "description": "红枫灌木，大型，原点在根部"
+    },
+    {
+      "id": "maple_medium",
+      "file": "maple_medium.glb",
+      "origin": "base",
+      "description": "红枫灌木，中型，原点在根部"
+    },
+    {
+      "id": "maple_small",
+      "file": "maple_small.glb",
+      "origin": "base",
+      "description": "红枫灌木，小型，原点在根部"
+    },
+    {
+      "id": "maple_sparse",
+      "file": "maple_sparse.glb",
+      "origin": "base",
+      "description": "红枫灌木，疏枝，原点在根部"
+    },
+    {
+      "id": "maple_clump",
+      "file": "maple_clump.glb",
+      "origin": "base",
+      "description": "红枫灌木，丛生，原点在根部"
+    },
+    {
+      "id": "azalea_large",
+      "file": "azalea_large.glb",
+      "origin": "base",
+      "description": "杜鹃花丛，大型，原点在根部"
+    },
+    {
+      "id": "azalea_medium",
+      "file": "azalea_medium.glb",
+      "origin": "base",
+      "description": "杜鹃花丛，中型，原点在根部"
+    },
+    {
+      "id": "azalea_small",
+      "file": "azalea_small.glb",
+      "origin": "base",
+      "description": "杜鹃花丛，小型，原点在根部"
+    },
+    {
+      "id": "azalea_sparse",
+      "file": "azalea_sparse.glb",
+      "origin": "base",
+      "description": "杜鹃花丛，疏枝，原点在根部"
+    },
+    {
+      "id": "pink_shrub_large",
+      "file": "pink_shrub_large.glb",
+      "origin": "base",
+      "description": "粉花灌木，大型，原点在根部"
+    },
+    {
+      "id": "pink_shrub_medium",
+      "file": "pink_shrub_medium.glb",
+      "origin": "base",
+      "description": "粉花灌木，中型，原点在根部"
+    },
+    {
+      "id": "pink_shrub_small",
+      "file": "pink_shrub_small.glb",
+      "origin": "base",
+      "description": "粉花灌木，小型，原点在根部"
+    },
+    {
+      "id": "pink_shrub_sparse",
+      "file": "pink_shrub_sparse.glb",
+      "origin": "base",
+      "description": "粉花灌木，疏枝，原点在根部"
+    },
+    {
+      "id": "hedge_white",
+      "file": "hedge_white.glb",
+      "origin": "base",
+      "description": "白花绿篱，原点在根部"
+    },
+    {
+      "id": "hedge_mixed",
+      "file": "hedge_mixed.glb",
+      "origin": "base",
+      "description": "混色绿篱，原点在根部"
+    },
+    {
+      "id": "hedge_red",
+      "file": "hedge_red.glb",
+      "origin": "base",
+      "description": "红叶绿篱，原点在根部"
+    },
+    {
+      "id": "groundcover",
+      "file": "groundcover.glb",
+      "origin": "base",
+      "description": "低矮地被，原点在根部"
+    },
+    {
+      "id": "peony_white",
+      "file": "peony_white.glb",
+      "origin": "base",
+      "description": "牡丹花丛，白色，原点在根部"
+    },
+    {
+      "id": "peony_pink",
+      "file": "peony_pink.glb",
+      "origin": "base",
+      "description": "牡丹花丛，粉色，原点在根部"
+    },
+    {
+      "id": "peony_red",
+      "file": "peony_red.glb",
+      "origin": "base",
+      "description": "牡丹花丛，红色，原点在根部"
+    },
+    {
+      "id": "peony_mixed",
+      "file": "peony_mixed.glb",
+      "origin": "base",
+      "description": "牡丹花丛，混色，原点在根部"
+    },
+    {
+      "id": "paving_square",
+      "file": "paving_square.glb",
+      "origin": "base",
+      "description": "青灰方砖，1 米见方、厚 0.15 米，对角裂纹带青苔，原点在底面中心"
+    },
+    {
+      "id": "paving_square_crack",
+      "file": "paving_square_crack.glb",
+      "origin": "base",
+      "description": "青灰方砖，1 米见方、厚 0.15 米，上沿裂纹，原点在底面中心"
+    },
+    {
+      "id": "paving_rect",
+      "file": "paving_rect.glb",
+      "origin": "base",
+      "description": "青灰长砖，2×1 米、厚 0.15 米，长边沿局部 X，原点在底面中心"
+    },
+    {
+      "id": "paving_corner",
+      "file": "paving_corner.glb",
+      "origin": "base",
+      "description": "青灰 L 形转角砖，外框 2 米、臂宽 1 米、厚 0.15 米，缺角在 Godot +X/−Z，原点在底面中心"
+    }
+  ]
+}

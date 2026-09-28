@@ -1,17 +1,16 @@
 extends Node
 
 const PORT := 24680
+const BATTLE_SERVER_2_PORT := 24681
+const ArenaLayout = preload("res://combat/arena_layout.gd")
+const ArenaCatalog = preload("res://combat/arena_catalog.gd")
+const MountainArenaData = preload("res://mountain_arena.gd")
 var session_port := PORT
 const ROOM_DUEL := "duel"
 const ROOM_TEAMS := "teams"
 const ROOM_FFA := "ffa"
 
-const SPAWNS: Array[Vector3] = [
-	Vector3(-12.0, 0.96, 0.0),
-	Vector3(12.0, 0.96, 0.0),
-	Vector3(-12.0, 0.96, -8.0),
-	Vector3(12.0, 0.96, 8.0),
-]
+const SPAWNS: Array[Vector3] = ArenaLayout.PLAYER_SPAWNS
 
 const HIT_METHODS := {
 	"pot_outbound": true,
@@ -87,6 +86,7 @@ var dedicated_server := false
 var headless_battle_server := false
 var headless_battle_requested := false
 var dedicated_room_config
+var battle_map_id := ArenaCatalog.COURTYARD
 
 @onready var local_player: CharacterBody3D = get_node("../Player")
 @onready var feedback: Node3D = get_node("../CombatFeedback")
@@ -98,6 +98,7 @@ func _ready() -> void:
 	headless_battle_requested = "--battle-server" in OS.get_cmdline_user_args()
 	add_to_group("network")
 	home_spawn = local_player.global_position
+	ensure_mountain_arena()
 	reset_slots()
 	multiplayer.peer_connected.connect(on_peer_connected)
 	multiplayer.peer_disconnected.connect(on_peer_disconnected)
@@ -256,9 +257,9 @@ func build_lobby() -> void:
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER)
 	panel.offset_left = -280
-	panel.offset_top = -250
+	panel.offset_top = -285
 	panel.offset_right = 280
-	panel.offset_bottom = 250
+	panel.offset_bottom = 285
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.add_theme_stylebox_override("panel", wood_panel_style())
 	lobby.add_child(panel)
@@ -296,10 +297,15 @@ func build_lobby() -> void:
 	style_button(join, Color("ab6855"))
 	box.add_child(join)
 	var dedicated_join := Button.new()
-	dedicated_join.text = "加入独立测试战斗服"
+	dedicated_join.text = "加入独立战斗服"
 	dedicated_join.pressed.connect(start_battle_client)
 	style_button(dedicated_join, Color("5a7d42"))
 	box.add_child(dedicated_join)
+	var dedicated_join_2 := Button.new()
+	dedicated_join_2.text = "加入独立战斗服2 · 山门演武场"
+	dedicated_join_2.pressed.connect(start_battle_client_2)
+	style_button(dedicated_join_2, Color("477362"))
+	box.add_child(dedicated_join_2)
 	lobby_status = body_label("")
 	box.add_child(lobby_status)
 	refresh_lobby_status("同一 Wi-Fi 或网线。连不上时，允许游戏通过 Windows 防火墙，端口 %d。" % PORT)
@@ -451,6 +457,12 @@ func start_join() -> void:
 	refresh_lobby_status("正在连接 %s …" % address)
 
 func start_battle_client() -> void:
+	start_battle_client_at(ArenaCatalog.COURTYARD, PORT)
+
+func start_battle_client_2() -> void:
+	start_battle_client_at(ArenaCatalog.MOUNTAIN_COURTYARD, BATTLE_SERVER_2_PORT)
+
+func start_battle_client_at(requested_map: String, port: int) -> void:
 	if phase == "joining":
 		return
 	var address := address_input.text.strip_edges()
@@ -458,17 +470,18 @@ func start_battle_client() -> void:
 		refresh_lobby_status("先填独立战斗服的 IP。")
 		return
 	close_peer()
+	battle_map_id = ArenaCatalog.normalize(requested_map)
 	var session := BattleClientSessionData.new()
 	session.name = "BattleClientSession"
 	session.manager = self
 	add_child(session)
-	var error := session.join(address, session_port)
+	var error := session.join(address, port)
 	if error != OK:
 		session.queue_free()
 		refresh_lobby_status("独立战斗服连接创建失败，请检查 IP。")
 		return
 	phase = "joining"
-	refresh_lobby_status("正在连接独立战斗服 %s …" % address)
+	refresh_lobby_status("正在连接独立战斗服 %s:%d …" % [address,port])
 
 func begin_play(slot: int, networked: bool) -> void:
 	phase = "play"
@@ -488,14 +501,13 @@ func begin_play(slot: int, networked: bool) -> void:
 	local_player.max_health = 1000 if not networked else 400
 	clear_scores()
 	local_player.reset_for_round()
-	var hall := get_parent().get_node_or_null("DuelHall")
-	if hall:
-		if networked:
-			hall.show_hall()
-		else:
-			hall.hide_hall()
 	if networked:
-		local_player.global_position = SPAWNS[slot]
+		show_battle_map(battle_map_id if using_battle_server() else ArenaCatalog.COURTYARD)
+	else:
+		hide_battle_maps()
+	if networked:
+		var spawn_points := ArenaCatalog.player_spawns(battle_map_id if using_battle_server() else ArenaCatalog.COURTYARD)
+		local_player.global_position = spawn_points[slot]
 		local_player.spawn_point = local_player.global_position
 		look_at_partner(slot)
 		local_player.banner = "玩家%d 进入比武大厅" % (slot + 1)
@@ -504,8 +516,9 @@ func begin_play(slot: int, networked: bool) -> void:
 	refresh_match_label()
 
 func look_at_partner(slot: int) -> void:
+	var spawn_points := ArenaCatalog.player_spawns(battle_map_id if using_battle_server() else ArenaCatalog.COURTYARD)
 	var partner := 0 if slot % 2 == 1 else 1
-	var direction: Vector3 = SPAWNS[partner] - SPAWNS[slot]
+	var direction: Vector3 = spawn_points[partner] - spawn_points[slot]
 	direction.y = 0.0
 	local_player.face_to(direction)
 
@@ -715,7 +728,8 @@ func set_training(enabled: bool) -> void:
 func _process(_delta: float) -> void:
 	if using_battle_server():
 		match_label.visible = phase == "play"
-		match_label.text = "独立战斗服 1v1 · 玩家%d · %s · RTT %d ms · F8 离开" % [local_player.slot_index+1,"对手已连接" if not puppets.is_empty() else "等待对手",get_node("BattleClientSession").rtt_ms]
+		var arena_name := "山门演武场" if battle_map_id == ArenaCatalog.MOUNTAIN_COURTYARD else "中式庭院"
+		match_label.text = "%s · 独立战斗服 1v1 · 玩家%d · %s · RTT %d ms · F8 离开" % [arena_name,local_player.slot_index+1,"对手已连接" if not puppets.is_empty() else "等待对手",get_node("BattleClientSession").rtt_ms]
 		return
 	if dedicated_server:
 		var dedicated_now := Time.get_ticks_msec()
@@ -1432,9 +1446,8 @@ func leave_room(reason: String) -> void:
 	room_kind = "solo"
 	phase = "menu"
 	set_training(true)
-	var hall := get_parent().get_node_or_null("DuelHall")
-	if hall:
-		hall.hide_hall()
+	hide_battle_maps()
+	battle_map_id = ArenaCatalog.COURTYARD
 	local_player.controls_locked = true
 	local_player.team_id = -1
 	local_player.chair_ride = false
@@ -1469,3 +1482,36 @@ func close_peer() -> void:
 		battle.shutdown()
 	if multiplayer.multiplayer_peer != null:
 		multiplayer.multiplayer_peer = null
+
+func ensure_mountain_arena() -> Node:
+	var arena := get_parent().get_node_or_null("MountainArena")
+	if arena == null:
+		arena = MountainArenaData.new()
+		arena.name = "MountainArena"
+		get_parent().add_child.call_deferred(arena)
+	return arena
+
+func show_battle_map(map_id: String) -> void:
+	battle_map_id = ArenaCatalog.normalize(map_id)
+	var hall := get_parent().get_node_or_null("DuelHall")
+	var mountain := get_parent().get_node_or_null("MountainArena")
+	if battle_map_id == ArenaCatalog.MOUNTAIN_COURTYARD and mountain:
+		mountain.show_arena()
+	elif hall:
+		if mountain and mountain.visible:
+			mountain.hide_arena()
+		hall.show_hall()
+
+func hide_battle_maps() -> void:
+	var mountain := get_parent().get_node_or_null("MountainArena")
+	if mountain and mountain.visible:
+		mountain.hide_arena()
+		return
+	var hall := get_parent().get_node_or_null("DuelHall")
+	if hall:
+		hall.hide_hall()
+
+func clear_arena_dummies() -> void:
+	var hall := get_parent().get_node_or_null("DuelHall")
+	if hall and hall.has_method("clear_dummies"):
+		hall.clear_dummies()

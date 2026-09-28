@@ -72,6 +72,11 @@ func run() -> void:
 	check(entities[a].velocity.x>4.9,"air punch keeps forward momentum")
 	entities[a].action = ""
 	entities[a].lock = 0.0
+	place(a,Vector3(-12,0.96,0))
+	entities[a].velocity = Vector3(6.5,0,0)
+	_resolve_attack(a,"jump",false,Vector3.RIGHT)
+	check(is_equal_approx(entities[a].velocity.x,6.5) and is_equal_approx(entities[a].velocity.y,7.5),"jump preserves horizontal running momentum")
+	entities[a].velocity = Vector3.ZERO
 	# Walking and a full dash stop in front of the live dummy.
 	place(a,Vector3(-4,0.96,0))
 	for i in 90:

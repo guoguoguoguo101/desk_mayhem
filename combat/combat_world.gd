@@ -11,7 +11,9 @@ const MAX_REWIND_TICKS := 12
 const MOVE_SPEED := 6.5
 const ATTACK_COOLDOWN_MS := 250
 const ROUND_RESET_MS := 2500
-const SPAWNS := [Vector3(-12.0, 0.96, 0.0), Vector3(12.0, 0.96, 0.0)]
+const ArenaLayout = preload("res://combat/arena_layout.gd")
+const ArenaCatalog = preload("res://combat/arena_catalog.gd")
+const SPAWNS := ArenaLayout.PLAYER_SPAWNS
 var last_trace_snap := -1
 const CombatStateData = preload("res://combat/combat_state.gd")
 const Motion = preload("res://combat/arena_motion.gd")
@@ -32,8 +34,10 @@ const ATTACKS := {
 }
 
 
-const SCHEMA := 3
-const DUMMY_SPAWNS := [Vector3(-8,0.96,-8),Vector3(8,0.96,8)]
+const SCHEMA := 4
+const DUMMY_SPAWNS := ArenaLayout.DUMMY_SPAWNS
+var map_id := ArenaCatalog.COURTYARD
+var arena_layout = ArenaLayout
 var entities: Dictionary = {}
 var pots: Dictionary = {}
 var server_tick := 0
@@ -56,7 +60,18 @@ func attach(parent: Node) -> void:
 	parent.add_child(viewport)
 	world = Node3D.new()
 	viewport.add_child(world)
-	Motion.build(world)
+	Motion.build(world, arena_layout)
+
+func configure_arena(next_map_id: String) -> void:
+	assert(viewport == null, "Arena must be selected before attaching the combat world.")
+	map_id = ArenaCatalog.normalize(next_map_id)
+	arena_layout = ArenaCatalog.layout(map_id)
+
+func player_spawns() -> Array[Vector3]:
+	return arena_layout.PLAYER_SPAWNS
+
+func dummy_spawns() -> Array[Vector3]:
+	return arena_layout.DUMMY_SPAWNS
 
 func dispose() -> void:
 	if is_instance_valid(viewport): viewport.queue_free()
@@ -174,12 +189,13 @@ func capture() -> Dictionary:
 		rows[id] = row
 	var projectiles := {}
 	for owner in pots: projectiles[owner] = pots[owner].capture()
-	return {"schema":SCHEMA,"tick":server_tick,"round_id":round_id,"round_reset_at":round_reset_at,
+	return {"schema":SCHEMA,"map_id":map_id,"tick":server_tick,"round_id":round_id,"round_reset_at":round_reset_at,
 		"next_entity_id":next_entity_id,"next_pot_id":next_pot_id,"next_action_serial":next_action_serial,
 		"entities":rows,"pots":projectiles,"events":recent_events.duplicate(true)}
 
 func restore(snapshot: Dictionary) -> void:
 	assert(int(snapshot.schema)==SCHEMA)
+	assert(ArenaCatalog.normalize(str(snapshot.get("map_id", map_id))) == map_id)
 	server_tick = int(snapshot.tick)
 	round_id = int(snapshot.round_id)
 	round_reset_at = int(snapshot.round_reset_at)
@@ -373,7 +389,9 @@ func _resolve_attack(attacker_id: String, intent_id: String, at_hit_frame := fal
 			return
 		if intent_id == "jump":
 			if attacker.position.y < 1.0:
-				attacker.velocity = Vector3(0,7.5,0)
+				var jump_velocity: Vector3 = attacker.get("velocity",Vector3.ZERO)
+				jump_velocity.y = 7.5
+				attacker.velocity = jump_velocity
 			else:
 				_deny_attack(attacker_id, attack_seq)
 			return
@@ -381,13 +399,16 @@ func _resolve_attack(attacker_id: String, intent_id: String, at_hit_frame := fal
 			if now < int(attacker.get("dash_ready",0)):
 				_deny_attack(attacker_id, attack_seq)
 				return
+			# Umbrella Q is committed movement, not a camera-aimed strike. Match the
+			# local player path: lock the dash to the body's current horizontal facing.
+			var dash_direction := Direction.horizontal(attacker.facing)
 			attacker.dash = 0.38
 			attacker.dash_hit = false
 			attacker.dash_seq = attack_seq
 			attacker.dash_serial = next_action_serial
 			next_action_serial += 1
-			attacker.dash_direction = attack_direction
-			attacker.facing = attack_direction
+			attacker.dash_direction = dash_direction
+			attacker.facing = dash_direction
 			attacker.dash_ready = now + BattleRules.cooldown_ms("dash")
 			attacker.followup = now + int(BattleRules.FOLLOWUP_WINDOW * 1000.0)
 			return

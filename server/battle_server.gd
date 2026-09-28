@@ -1,12 +1,12 @@
 extends SceneTree
 ## Session/transport adapter. All battle decisions live in CombatWorld.
 const Core = preload("res://combat/combat_world.gd")
+const ArenaCatalog = preload("res://combat/arena_catalog.gd")
 const Codec = preload("res://network/world_codec.gd")
 const Reliable = preload("res://network/reliable_events.gd")
 const DEFAULT_PORT := 24680
 const ACTIVE_CAPACITY := 2
 const PEER_TIMEOUT_MS := 5000
-const SPAWNS := [Vector3(-12,0.96,0),Vector3(12,0.96,0)]
 const CRITICAL_TYPES := ["entity_death","entity_respawn","round_end","round_reset"]
 var sim = Core.new()
 var transport: PacketPeerUDP
@@ -18,8 +18,9 @@ func _initialize() -> void:
 	call_deferred("_start")
 
 func _start() -> void:
+	sim.configure_arena(map_from_args())
 	sim.attach(root)
-	for at in Core.DUMMY_SPAWNS: sim._create_entity("dummy",-1,at)
+	for at in sim.dummy_spawns(): sim._create_entity("dummy",-1,at)
 	transport = PacketPeerUDP.new()
 	var error := transport.bind(port_from_args(),"*")
 	if error != OK:
@@ -27,7 +28,7 @@ func _start() -> void:
 		quit(1)
 		return
 	ready = true
-	print("BATTLE_SERVER_RAW listening port=%d active_capacity=2 reserved=4 protocol=3" % port_from_args())
+	print("BATTLE_SERVER_RAW listening port=%d map=%s active_capacity=2 reserved=4 protocol=%d" % [port_from_args(),sim.map_id,Core.SCHEMA])
 
 func _process(_delta: float) -> bool:
 	if not ready: return false
@@ -104,7 +105,7 @@ func _admit(peer_id: String, ip: String, port: int) -> void:
 		var slot := 0
 		for peer in peers.values():
 			if int(peer.slot)==0: slot = 1
-		var id: String = sim._create_entity("player",slot,SPAWNS[slot])
+		var id: String = sim._create_entity("player",slot,sim.player_spawns()[slot])
 		peers[peer_id] = {"slot":slot,"entity_id":id,"ip":ip,"port":port,"session":Crypto.new().generate_random_bytes(16).hex_encode(),"lane":Reliable.new(),"last_seen":Time.get_ticks_msec(),"pending":{},"attack_high":0}
 		print("BATTLE_SERVER admitted entity=%s slot=%d" % [id,slot])
 	var peer: Dictionary = peers[peer_id]
@@ -192,6 +193,12 @@ func port_from_args() -> int:
 		if arg.begins_with("--port="):
 			return maxi(1, int(arg.trim_prefix("--port=")))
 	return DEFAULT_PORT
+
+func map_from_args() -> String:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--map="):
+			return ArenaCatalog.normalize(arg.trim_prefix("--map="))
+	return ArenaCatalog.COURTYARD
 
 func _number(value) -> bool:
 	return value is float or value is int

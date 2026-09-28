@@ -30,6 +30,18 @@ func run() -> void:
 	await physics_frame
 	await physics_frame
 	var state := {"health":400,"velocity":Vector3.ZERO}
+	Motion.step(body,state,Vector3.RIGHT)
+	check(absf(float(state.velocity.x)-46.0/60.0)<0.001,"ground acceleration reaches shared 46m/s2")
+	body.position = Vector3(0,0.96,0)
+	state.velocity = Vector3(6.5,0,0)
+	Motion.step(body,state,Vector3.ZERO)
+	check(absf(float(state.velocity.x)-(6.5-65.0/60.0))<0.001,"ground braking uses shared 65m/s2")
+	body.position = Vector3(0,0.96,0)
+	state.velocity = Vector3(6.5,0,0)
+	Motion.step(body,state,Vector3.LEFT)
+	check(absf(float(state.velocity.x)-(6.5-65.0/60.0))<0.001,"ground reversal starts with braking rate")
+	body.position = Vector3(0,0.96,0)
+	state.velocity = Vector3.ZERO
 	for i in 600:
 		Motion.step(body,state,Vector3.RIGHT)
 	check(body.position.x < 26.3 and body.position.x > 26.0,"wall blocks walking")

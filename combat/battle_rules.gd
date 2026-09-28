@@ -2,6 +2,8 @@ extends RefCounted
 ## Values copied from the local player/FloatRules, not balance changes.
 const FloatLift = preload("res://float_rules.gd")
 const BUFFER_MS := 150
+const GROUND_ACCEL := 46.0
+const GROUND_BRAKE := 65.0
 const CD_DASH := 1.5
 const CD_SPIN := 2.2
 const CD_POT := 0.75
@@ -28,6 +30,15 @@ const UPPERCUT_LOCK := 0.32
 const PHYSICS_HZ := 60.0
 const PUNCH_LINK_MS := 650
 const PUNCH_ORDER := ["punch_light", "punch_follow", "punch_uppercut"]
+
+static func ground_response_rate(velocity: Vector3, target_velocity: Vector3, has_input: bool) -> float:
+	if not has_input:
+		return GROUND_BRAKE
+	var current := Vector2(velocity.x, velocity.z)
+	var target := Vector2(target_velocity.x, target_velocity.z)
+	if current.length_squared() > 0.000001 and current.dot(target) <= 0.0:
+		return GROUND_BRAKE
+	return GROUND_ACCEL
 ## One melee timing table. startup is the hit delay, active is the single
 ## query frame, recovery fills out the lock. Tick counts match the previous
 ## to_ticks() rounding. A missed punch does not advance the string.

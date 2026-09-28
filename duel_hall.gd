@@ -4,6 +4,7 @@ extends Node3D
 # https://polyhaven.com  wood_floor / clay_roof_tiles / plastered_wall / wooden_planks
 
 const OFFICE_NODES := ["Architecture", "Furniture", "MeetingArea", "BreakArea", "ArenaCover"]
+const ArenaLayout = preload("res://combat/arena_layout.gd")
 
 var shown := false
 var hall_dummies: Array[Node] = []
@@ -62,14 +63,13 @@ func build() -> void:
 	var cinnabar := flat_mat(Color(0.62, 0.1, 0.08), 0.5)
 	var glow := glow_mat(Color(0.9, 0.28, 0.1), Color(1.0, 0.48, 0.16), 2.2)
 
-	add_static_box(Vector3(0, -0.2, 0), Vector3(56, 0.4, 44), yard)
+	var floor_entry: Dictionary = ArenaLayout.entries_for_role("floor")[0]
+	add_static_box(floor_entry.position, floor_entry.size, yard, str(floor_entry.id), floor_entry.rotation_degrees)
 	add_mesh(Vector3(0, 0.025, 0), Vector3(34, 0.05, 26), floor_wood)
 	add_trim(gold)
 
-	add_static_box(Vector3(0, 1.9, -20.75), Vector3(54.2, 3.8, 0.5), plaster)
-	add_static_box(Vector3(0, 1.9, 20.75), Vector3(54.2, 3.8, 0.5), plaster)
-	add_static_box(Vector3(-26.75, 1.9, 0), Vector3(0.5, 3.8, 41.5), plaster)
-	add_static_box(Vector3(26.75, 1.9, 0), Vector3(0.5, 3.8, 41.5), plaster)
+	for wall in ArenaLayout.entries_for_role("wall"):
+		add_static_box(wall.position, wall.size, plaster, str(wall.id), wall.rotation_degrees)
 	add_wall_dressing(plank, ink, gold, cinnabar)
 	add_roof(roof, gold, cinnabar)
 	add_pillars(pillar_red, gold)
@@ -91,7 +91,6 @@ func spawn_dummies() -> void:
 	var template := get_parent().get_node_or_null("TrainingDummy1")
 	if template == null:
 		return
-	var spots: Array[Vector3] = [Vector3(-8, 0, -8), Vector3(8, 0, 8)]
 	var names: Array[String] = ["稻草人甲", "稻草人乙"]
 	for index in 2:
 		var copy := template.duplicate()
@@ -100,7 +99,8 @@ func spawn_dummies() -> void:
 		copy.add_to_group("hall_dummies")
 		copy.add_to_group("combat_targets")
 		get_parent().add_child(copy)
-		copy.global_position = spots[index]
+		var state_spawn: Vector3 = ArenaLayout.DUMMY_SPAWNS[index]
+		copy.global_position = Vector3(state_spawn.x, 0.0, state_spawn.z)
 		copy.visible = true
 		copy.set_process(true)
 		copy.set_physics_process(true)
@@ -203,36 +203,33 @@ func add_roof(roof: Material, gold: Material, cinnabar: Material) -> void:
 			add_mesh(Vector3(x, 4.7, z), Vector3(0.55, 0.28, 0.55), cinnabar)
 
 func add_pillars(pillar_red: Material, gold: Material) -> void:
-	var spots: Array[Vector3] = []
-	var pillar_x: Array[float] = [-15.0, -7.5, 0.0, 7.5, 15.0]
-	var pillar_z: Array[float] = [-11.0, 11.0]
-	for px in pillar_x:
-		for pz in pillar_z:
-			spots.append(Vector3(px, 0, pz))
-	for spot in spots:
-		add_pillar(spot, pillar_red, gold)
+	for entry in ArenaLayout.entries_for_role("pillar"):
+		add_pillar(entry, pillar_red, gold)
 	add_mesh(Vector3(0, 3.48, -11.0), Vector3(30.4, 0.22, 0.34), pillar_red)
 	add_mesh(Vector3(0, 3.48, 11.0), Vector3(30.4, 0.22, 0.34), pillar_red)
 	add_mesh(Vector3(-15.0, 3.48, 0), Vector3(0.34, 0.22, 22.4), pillar_red)
 	add_mesh(Vector3(15.0, 3.48, 0), Vector3(0.34, 0.22, 22.4), pillar_red)
 
-func add_pillar(at: Vector3, wood: Material, gold: Material) -> void:
+func add_pillar(entry: Dictionary, wood: Material, gold: Material) -> void:
+	var at: Vector3 = entry.position
 	var body := StaticBody3D.new()
-	body.position = Vector3(at.x, 1.7, at.z)
+	body.position = at
+	body.rotation_degrees = entry.rotation_degrees
+	body.set_meta("arena_layout_id", str(entry.id))
 	add_child(body)
 	var mesh_node := MeshInstance3D.new()
 	var cyl := CylinderMesh.new()
-	cyl.top_radius = 0.24
-	cyl.bottom_radius = 0.28
-	cyl.height = 3.4
+	cyl.top_radius = float(entry.radius) - 0.04
+	cyl.bottom_radius = float(entry.radius)
+	cyl.height = float(entry.height)
 	cyl.radial_segments = 12
 	mesh_node.mesh = cyl
 	mesh_node.material_override = wood
 	body.add_child(mesh_node)
 	var shape_node := CollisionShape3D.new()
 	var shape := CylinderShape3D.new()
-	shape.radius = 0.28
-	shape.height = 3.4
+	shape.radius = float(entry.radius)
+	shape.height = float(entry.height)
 	shape_node.shape = shape
 	body.add_child(shape_node)
 	add_mesh(Vector3(at.x, 0.12, at.z), Vector3(0.78, 0.24, 0.78), gold)
@@ -282,15 +279,12 @@ func add_lattice(origin: Vector3, yaw: float, ink: Material) -> void:
 		add_mesh_on(root, Vector3(float(column) * 0.38 - 0.76, 0, 0), Vector3(0.05, 1.7, 0.05), ink)
 
 func add_benches(plank: Material, ink: Material) -> void:
-	var south: Array[float] = [-18.0, -9.0, 0.0, 9.0, 18.0]
-	for x in south:
-		add_bench(Vector3(x, 0, 16.6), plank, ink)
-	var north: Array[float] = [-18.0, -9.0, 9.0, 18.0]
-	for x in north:
-		add_bench(Vector3(x, 0, -16.6), plank, ink)
+	for entry in ArenaLayout.entries_for_role("bench"):
+		add_bench(entry, plank, ink)
 
-func add_bench(at: Vector3, plank: Material, ink: Material) -> void:
-	add_static_box(Vector3(at.x, 0.42, at.z), Vector3(1.8, 0.12, 0.55), plank)
+func add_bench(entry: Dictionary, plank: Material, ink: Material) -> void:
+	var at: Vector3 = entry.position
+	add_static_box(at, entry.size, plank, str(entry.id), entry.rotation_degrees)
 	add_mesh(Vector3(at.x - 0.7, 0.2, at.z), Vector3(0.1, 0.4, 0.4), ink)
 	add_mesh(Vector3(at.x + 0.7, 0.2, at.z), Vector3(0.1, 0.4, 0.4), ink)
 
@@ -353,9 +347,12 @@ func add_carpet(cinnabar: Material, gold: Material) -> void:
 	ring.position = Vector3(0, 0.07, 0)
 	add_child(ring)
 
-func add_static_box(at: Vector3, size: Vector3, mat: Material) -> void:
+func add_static_box(at: Vector3, size: Vector3, mat: Material, layout_id := "", rotation_degrees := Vector3.ZERO) -> void:
 	var body := StaticBody3D.new()
 	body.position = at
+	body.rotation_degrees = rotation_degrees
+	if not layout_id.is_empty():
+		body.set_meta("arena_layout_id", layout_id)
 	add_child(body)
 	var mesh_node := MeshInstance3D.new()
 	var box := BoxMesh.new()

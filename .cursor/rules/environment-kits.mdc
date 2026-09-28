@@ -1,0 +1,14 @@
+---
+description: 演武场环境美术拆成可复用构件，不把重复道具烘回整张地图
+globs: assets/environment/**/*,tools/build_mountain_arena.py,mountain_arena.gd
+alwaysApply: false
+---
+
+# 环境构件
+
+- 可复用道具放在 `assets/environment/kits/<id>.glb`，清单是 `assets/environment/kits/catalog.json`。
+- 场地外壳只含地面、围墙、建筑主体、远山、水池。竹竿、落叶、碎石、石灯、朱红柱、屋面用 `kit_placements.json` 摆放，不写进外壳网格。
+- 新设计图先对照 catalog。已有构件只加摆放；没有才新增一个 kit id，并重新跑 `tools/build_mountain_arena.py`。
+- 花、叶和需要接近设计图的表面用贴图。贴图可以按设计图生成，也可以从设计图裁出一块；不要把整张设计图原样贴上。花叶卡片的贴图只放在 `assets/environment/kits/textures/`。GLB 引用这一份，不要把同一张图嵌进每个模型，也不要在模型旁边再存一份。
+- 构件原点以 catalog 的 `origin` 为准，1 单位 = 1 米。GLB 导入后是 Godot 的 Y 轴向上。
+- 构件不带碰撞。玩法碰撞只写在对应地图的 layout，例如 `combat/mountain_arena_layout.gd`。

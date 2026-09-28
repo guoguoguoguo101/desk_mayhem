@@ -39,7 +39,6 @@ const PUNCH_LINK := 0.55
 const HITSTUN := 0.45
 
 @export var move_speed := 6.5
-@export var acceleration := 28.0
 
 @onready var visual: Node3D = $Visual
 @onready var umbrella_visual: Node3D = $Visual/Umbrella
@@ -2109,8 +2108,11 @@ func _physics_process(delta: float) -> void:
 			feedback.dash_trail(global_position + Vector3.UP * 0.1)
 			dash_trail_time = 0.06
 		target_velocity = dash_direction * 15.0
-	velocity.x = move_toward(velocity.x, target_velocity.x, acceleration * delta)
-	velocity.z = move_toward(velocity.z, target_velocity.z, acceleration * delta)
+	var response := 28.0
+	if is_on_floor() and not was_dashing:
+		response = BattleRules.ground_response_rate(velocity, target_velocity, direction.length_squared()>0.001)
+	velocity.x = move_toward(velocity.x, target_velocity.x, response * delta)
+	velocity.z = move_toward(velocity.z, target_velocity.z, response * delta)
 	if was_dashing:
 		velocity.x = target_velocity.x
 		velocity.z = target_velocity.z

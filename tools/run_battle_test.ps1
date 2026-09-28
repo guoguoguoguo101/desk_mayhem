@@ -1,11 +1,11 @@
-param([int]$Port = 24781, [switch]$Impaired, [switch]$Combo)
+param([int]$Port = 24781, [string]$Map = 'courtyard', [switch]$Impaired, [switch]$Combo)
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
 $output = Join-Path $project 'test_output'
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 $processes = @()
 try {
-    $server = Start-Process godot_console.exe -WindowStyle Hidden -PassThru -ArgumentList @('--headless','--path',$project,'--script','res://server/battle_server.gd','--',"--port=$Port") -RedirectStandardOutput "$output/battle_server.out" -RedirectStandardError "$output/battle_server.err"
+    $server = Start-Process godot_console.exe -WindowStyle Hidden -PassThru -ArgumentList @('--headless','--path',$project,'--script','res://server/battle_server.gd','--',"--port=$Port","--map=$Map") -RedirectStandardOutput "$output/battle_server.out" -RedirectStandardError "$output/battle_server.err"
     $processes += $server
     for ($attempt=0; $attempt -lt 30; $attempt++) {
         if ((Test-Path "$output/battle_server.out") -and (Select-String -Path "$output/battle_server.out" -Pattern "listening port=$Port " -Quiet)) { break }

@@ -48,7 +48,7 @@ func run() -> void:
 	_resolve_attack("a","dash",false,aim)
 	_apply_input("a",{"seq":4,"move":[1,0],"aim":[1,0]})
 	_simulate_players(Motion.DT)
-	check(entities.a.dash_direction.distance_to(aim)<0.001 and entities.a.facing.distance_to(aim)<0.001,"dash does not steer with camera")
+	check(entities.a.dash_direction.distance_to(Vector3.FORWARD)<0.001 and entities.a.facing.distance_to(Vector3.FORWARD)<0.001,"dash locks body facing instead of camera aim")
 	entities.a.dash = 0
 	entities.a.facing = Vector3.FORWARD
 	_resolve_attack("a","returning_pot",false,Vector3.RIGHT)
@@ -68,6 +68,16 @@ func run() -> void:
 	body.visual.rotation.y = 1.4
 	client._present_facing(body,Vector3.RIGHT,0.1)
 	check(is_equal_approx(body.visual.rotation.y,1.4),"snapshot presentation does not override spin")
+	# The local predicted target moves immediately; only a snapshot correction
+	# offset is removed over a short bounded interval.
+	client._begin_local_correction(Vector3(0.1,0,0),Vector3.ZERO,true)
+	var halfway: Vector3 = client._local_render_position(Vector3(1,0,0),0.04)
+	check(halfway.distance_to(Vector3(1.05,0,0))<0.001,"local prediction is direct while small correction decays")
+	check(client._local_render_position(Vector3(2,0,0),0.04).distance_to(Vector3(2,0,0))<0.001,"small correction finishes within 80ms")
+	client._begin_local_correction(Vector3(1,0,0),Vector3.ZERO,true)
+	check(client._local_render_position(Vector3.ZERO,0.0)==Vector3.ZERO,"large correction snaps immediately")
+	client._begin_local_correction(Vector3(0.1,0,0),Vector3.ZERO,false)
+	check(client._local_render_position(Vector3.ZERO,0.0)==Vector3.ZERO,"life change snaps immediately")
 	body.visual.free()
 	body.free()
 	client.free()

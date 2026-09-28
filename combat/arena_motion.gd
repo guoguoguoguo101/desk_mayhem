@@ -8,6 +8,7 @@ const FLOOR_Y := 0.9
 const NPC_LAYER := 256
 const Direction = preload("res://combat/attack_direction.gd")
 const BattleRules = preload("res://combat/battle_rules.gd")
+const ArenaLayout = preload("res://combat/arena_layout.gd")
 static func blink(body: CharacterBody3D, state: Dictionary, direction: Vector3, blockers: Array = []) -> bool:
 	var start := body.global_position
 	for step in range(10,0,-1):
@@ -24,31 +25,31 @@ static func blink(body: CharacterBody3D, state: Dictionary, direction: Vector3, 
 	state.velocity = velocity
 	return true
 
-static func build(parent: Node3D) -> void:
-	box(parent, Vector3(0,-0.2,0), Vector3(56,0.4,44))
-	for z in [-20.75,20.75]:
-		box(parent, Vector3(0,1.9,z), Vector3(54.2,3.8,0.5))
-	for x in [-26.75,26.75]:
-		box(parent, Vector3(x,1.9,0), Vector3(0.5,3.8,41.5))
-	for x in [-15.0,-7.5,0.0,7.5,15.0]:
-		for z in [-11.0,11.0]:
-			var shape := CylinderShape3D.new()
-			shape.radius = 0.28
-			shape.height = 3.4
-			collider(parent, Vector3(x,1.7,z), shape)
-	for x in [-18.0,-9.0,0.0,9.0,18.0]:
-		box(parent, Vector3(x,0.42,16.6), Vector3(1.8,0.12,0.55))
-		if x != 0.0:
-			box(parent, Vector3(x,0.42,-16.6), Vector3(1.8,0.12,0.55))
+static func build(parent: Node3D, layout = ArenaLayout) -> void:
+	for entry in layout.collision_entries():
+		var shape: Shape3D
+		if str(entry.shape) == "cylinder":
+			var cylinder := CylinderShape3D.new()
+			cylinder.radius = float(entry.radius)
+			cylinder.height = float(entry.height)
+			shape = cylinder
+		else:
+			var box_shape := BoxShape3D.new()
+			box_shape.size = entry.size
+			shape = box_shape
+		collider(parent, entry.position, shape, str(entry.id), entry.rotation_degrees)
 
-static func box(parent: Node3D, at: Vector3, size: Vector3) -> void:
+static func box(parent: Node3D, at: Vector3, size: Vector3, layout_id := "") -> void:
 	var shape := BoxShape3D.new()
 	shape.size = size
-	collider(parent, at, shape)
+	collider(parent, at, shape, layout_id)
 
-static func collider(parent: Node3D, at: Vector3, shape: Shape3D) -> void:
+static func collider(parent: Node3D, at: Vector3, shape: Shape3D, layout_id := "", rotation_degrees := Vector3.ZERO) -> void:
 	var body := StaticBody3D.new()
 	body.position = at
+	body.rotation_degrees = rotation_degrees
+	if not layout_id.is_empty():
+		body.set_meta("arena_layout_id", layout_id)
 	body.collision_layer = 128
 	body.collision_mask = 0
 	var collision := CollisionShape3D.new()
@@ -94,9 +95,10 @@ static func step(body: CharacterBody3D, state: Dictionary, move: Vector3, dt: fl
 		state.facing = Direction.turn(state.get("facing",Vector3.FORWARD),move,dt)
 	var slam_hold := float(state.get("slam_hold", 0.0))
 	if not airborne and slam_hold <= 0.0:
-		var acceleration := (10.0 if move.length_squared()>0.001 else 2.0) if jumping else 28.0
-		velocity.x = move_toward(velocity.x, move.x*speed, acceleration*dt)
-		velocity.z = move_toward(velocity.z, move.z*speed, acceleration*dt)
+		var target_velocity := move * speed
+		var response := (10.0 if move.length_squared()>0.001 else 2.0) if jumping else BattleRules.ground_response_rate(velocity, target_velocity, move.length_squared()>0.001)
+		velocity.x = move_toward(velocity.x, target_velocity.x, response*dt)
+		velocity.z = move_toward(velocity.z, target_velocity.z, response*dt)
 	if slam_hold > 0.0:
 		state.slam_hold = maxf(0.0, slam_hold - dt)
 	velocity.y -= (20.0 if bool(state.get("bounce_pending",false)) or not airborne else FloatRules.AIR_GRAVITY)*dt

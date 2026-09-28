@@ -7,6 +7,10 @@ const Reliable = preload("res://network/reliable_events.gd")
 const BattleRules = preload("res://combat/battle_rules.gd")
 const PotVisual = preload("res://returning_pot.gd")
 const DummyView = preload("res://client/battle_dummy_view.gd")
+const LOCAL_SMALL_CORRECTION := 0.15
+const LOCAL_SNAP_DISTANCE := 0.8
+const LOCAL_SMALL_CORRECTION_TIME := 0.08
+const LOCAL_MEDIUM_CORRECTION_TIME := 0.05
 var replay = Prediction.new()
 var world_packets = Codec.new()
 var manager: Node
@@ -23,6 +27,8 @@ var queued_actions: Array = []
 var history: Array:
 	get: return replay.history
 var predicted: Dictionary = {}
+var local_render_offset := Vector3.ZERO
+var local_correction_remaining := 0.0
 var motor: CharacterBody3D
 var snapshot_tick := -1
 var last_packet := 0
@@ -101,6 +107,8 @@ func _physics_process(_delta: float) -> void:
 	if not pending_snapshot.is_empty():
 		var first := not joined
 		if first: _enter()
+		var previous_local_display: Vector3 = manager.local_player.global_position
+		var previous_render_life := int(render_lives.get(entity_id, -1))
 		snapshot_tick = int(pending_snapshot.tick)
 		snapshot_received_at = Time.get_ticks_msec()
 		round_id = int(pending_snapshot.round_id)
@@ -118,6 +126,9 @@ func _physics_process(_delta: float) -> void:
 			_present_events(emitted,false)
 		else:
 			for event in replay.authority.get("events",[]): seen_events[_event_key(event)] = true
+		var corrected: Dictionary = replay.sim.entities.get(entity_id, {})
+		var same_render_life := previous_render_life == int(corrected.get("life", -2))
+		_begin_local_correction(previous_local_display, corrected.get("position", previous_local_display), not first and same_render_life)
 	if not joined: return
 	# Bound speculation during outages. Never silently drop an unconfirmed action.
 	if replay.sim.server_tick>=snapshot_tick+Prediction.MAX_LEAD: return
@@ -151,11 +162,14 @@ func _wire_frame(frame: Dictionary) -> Dictionary:
 
 func _enter() -> void:
 	joined = true
+	var server_map := str(pending_snapshot.get("map_id", "courtyard"))
+	replay.sim.configure_arena(server_map)
+	manager.battle_map_id = server_map
 	manager.room_kind = "duel"
 	manager.begin_play(slot,true)
 	manager.local_player.loadout[0] = 0
 	manager.local_player.loadout[1] = 2
-	manager.get_parent().get_node("DuelHall").clear_dummies()
+	manager.clear_arena_dummies()
 	original_layer = manager.local_player.collision_layer
 	original_mask = manager.local_player.collision_mask
 	manager.local_player.collision_layer = 0
@@ -280,13 +294,45 @@ func _render(delta: float) -> void:
 		var state: Dictionary = replay.sim.entities[id]
 		var target: Vector3 = state.position
 		# Smoothing is display-only. Neither collision nor aiming reads these transforms.
-		body.global_position = target if body.global_position.distance_to(target)>2.0 else body.global_position.lerp(target,1.0-exp(-35.0*delta))
+		if str(id) == entity_id and state.kind == "player":
+			# Own movement is already predicted. Display it immediately and smooth only
+			# the temporary visual offset created by an authoritative correction.
+			body.global_position = _local_render_position(target, delta)
+		else:
+			body.global_position = target if body.global_position.distance_to(target)>2.0 else body.global_position.lerp(target,1.0-exp(-35.0*delta))
 		if state.kind=="player": _present_facing(body,state.facing,delta)
 	for id in pot_visuals:
 		var visual = pot_visuals[id]
 		visual.global_position = visual.global_position.lerp(pot_targets[id],1.0-exp(-35.0*delta))
 		visual.rotor.rotate_y(delta*(38.0 if visual.recalled else 26.0))
 		visual.update_trail()
+
+func _begin_local_correction(display_position: Vector3, target: Vector3, preserve_continuity: bool) -> void:
+	var offset := display_position - target
+	if not preserve_continuity or not offset.is_finite() or offset.length() > LOCAL_SNAP_DISTANCE:
+		local_render_offset = Vector3.ZERO
+		local_correction_remaining = 0.0
+		return
+	local_render_offset = offset
+	if offset.length_squared() < 0.000001:
+		local_render_offset = Vector3.ZERO
+		local_correction_remaining = 0.0
+	else:
+		local_correction_remaining = LOCAL_SMALL_CORRECTION_TIME if offset.length() < LOCAL_SMALL_CORRECTION else LOCAL_MEDIUM_CORRECTION_TIME
+
+func _local_render_position(target: Vector3, delta: float) -> Vector3:
+	if local_correction_remaining <= 0.0 or local_render_offset.length_squared() < 0.000001:
+		local_render_offset = Vector3.ZERO
+		local_correction_remaining = 0.0
+		return target
+	if delta >= local_correction_remaining:
+		local_render_offset = Vector3.ZERO
+		local_correction_remaining = 0.0
+		return target
+	var remaining := local_correction_remaining - delta
+	local_render_offset *= remaining / local_correction_remaining
+	local_correction_remaining = remaining
+	return target + local_render_offset
 
 func _event_key(event: Dictionary) -> String:
 	var type := str(event.get("type",""))
@@ -360,6 +406,8 @@ func _remove_pot(id) -> void:
 
 func shutdown() -> void:
 	closing = true
+	local_render_offset = Vector3.ZERO
+	local_correction_remaining = 0.0
 	for view in npc_views.values(): view.queue_free()
 	for id in pot_visuals.keys(): _remove_pot(id)
 	replay.sim.dispose()
