@@ -8,9 +8,11 @@
 powershell -ExecutionPolicy Bypass -File tools/start_battle_server.ps1
 ```
 
-独立 Headless 常开房间 1 使用 UDP 24680 和原庭院。地图 2 用 `tools/start_battle_server.ps1 -Port 24681 -Map mountain_courtyard` 启动，对应菜单“加入独立战斗服2 · 山门演武场”。两边最多两名玩家及两只不占席位的稻草人。本机地址 127.0.0.1，另一台电脑填服务器 IP。协议已升级至 4，旧游戏进程需重新运行。
+独立 Headless 常开房间 1 使用 UDP 24680 和原庭院。地图 2 用 `tools/start_battle_server.ps1 -Port 24681 -Map mountain_courtyard` 启动，对应菜单“加入独立战斗服2 · 山门演武场”。两边最多两名玩家及两只不占席位的稻草人。本机地址 127.0.0.1，另一台电脑填服务器 IP。协议已升级至 5，旧游戏进程需重新运行。
 
 Q 冲锋再 Q 挑飞，E 旋伞，F 飞锅/召回，C 扣锅，Shift 闪现（冷却 3 秒，硬直、浮空、击飞中可放），空格跳，左键连拳，右键踢，F8 退出。稻草人坐标 -8/-8 与 8/8，2000 HP，死后 3 秒复活，不影响 PvP 比分。玩家 400 HP，回合结束 2.5 秒重置。
+
+山门演武场额外固定 1/2 鼠标技能：1 甩出鼠标，最远约 16 米，仅飞行中的鼠标本体碰撞挂线；连接期间再按 1 拉回目标。无连接时 2 剪切闪，先穿行、后以大 X 路径爆发击飞；连接时 2 交换双方位置。连接持续 5 秒，Q/Shift 不主动断线。按键动作和命中最终以服务器为准。
 
 ## 自动回归
 
@@ -21,6 +23,7 @@ godot_console.exe --headless --path . --script res://tests/mountain_arena_test.g
 godot_console.exe --headless --path . --script res://tests/battle_entities_test.gd
 godot_console.exe --headless --path . --script res://tests/battle_combo_test.gd
 godot_console.exe --headless --path . --script res://tests/attack_direction_test.gd
+godot_console.exe --headless --path . --script res://tests/battle_mouse_test.gd
 godot_console.exe --headless --path . --script res://tests/battle_core_test.gd
 godot_console.exe --headless --path . --script res://tests/combat_core_test.gd
 powershell -ExecutionPolicy Bypass -File tools/run_battle_test.ps1
@@ -34,6 +37,7 @@ powershell -ExecutionPolicy Bypass -File tools/run_battle_test.ps1 -Combo -Impai
 - battle_entities_test：动态阻挡、共享受击、墙边反弹/落地、飞锅去回各一次、死亡防重、NPC/PvP 隔离、同 Tick 多人命中、相互致死平局。同一世界 Tick 判断命中。
 - battle_combo_test：保留击飞高度、旋伞续空、冷却、预输入、空中扣锅等数值回归；不是单独以此证明联网连招。
 - attack_direction_test：30° 瞄准修正、雨伞 Q 锁定身体面向、旋伞显示分离，以及本地预测位置直出/纠偏偏移限时消除。
+- battle_mouse_test：鼠标飞行挂线及预测、交换、落空与冷却、向下甩的离脚距离、较高浮空目标、远距离目标、拉回、剪切闪多人路径命中和地面击飞、空中滞空、特效运行。
 - battle_core_test / combat_core_test：基础运动、可靠通道和伤害规则。
 - 默认双客户端测试：真实场景加入、移动、出拳、同步扣血、浮空、飞锅、闪现、准星。
 - -Combo：两游戏客户端分别接近两只稻草人，按 Tick 操作整套连招，以服务器确认事件断言两次挑飞、旋伞、飞锅去程、空中扣锅。
@@ -47,7 +51,7 @@ python tests/battle_npc_protocol_test.py 24786
 python tests/battle_protocol_test.py 24786
 ```
 
-NPC 脚本验证晚加入 HP/位置、飞锅两段和人数限制；生命周期脚本验证伪造结果、重复攻击、比分、回合、超时重连。勿针对真人正在使用的房间运行。这两份脚本使用协议 4 的输入帧格式。验收不用 `battle_transport_client`。
+NPC 脚本验证晚加入 HP/位置、飞锅两段和人数限制；生命周期脚本验证伪造结果、重复攻击、比分、回合、超时重连。勿针对真人正在使用的房间运行。这两份脚本使用协议 5 的输入帧格式。验收不用 `battle_transport_client`。
 
 ## 排查
 

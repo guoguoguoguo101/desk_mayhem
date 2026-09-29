@@ -83,10 +83,11 @@ func _apply_input(peer_id: String, payload: Dictionary) -> void:
 			if not action is Dictionary or not _number(action.get("attack_seq")): continue
 			var attack_seq := int(action.attack_seq)
 			if attack_seq<=0 or attack_seq<int(peer.attack_high)-128 or attack_seq>int(peer.attack_high)+600: continue
-			var direction = _direction(action.get("aim"),false)
+			var attack_name := str(action.get("attack", ""))
+			var direction = _mouse_aim(action.get("aim")) if attack_name == "mouse_cast" else _direction(action.get("aim"),false)
 			if direction==null: continue
 			peer.attack_high = maxi(int(peer.attack_high),attack_seq)
-			actions.append({"attack_seq":attack_seq,"attack":str(action.get("attack","")),"aim":direction})
+			actions.append({"attack_seq":attack_seq,"attack":attack_name,"aim":direction})
 		if seq<=int(state.input_seq) and actions.is_empty(): continue
 		peer.pending[seq] = {"entity_id":peer.entity_id,"seq":seq,"tick":tick,"round_id":sim.round_id,"life":int(state.life),"move":move,"aim":aim,"actions":actions}
 
@@ -96,6 +97,18 @@ func _direction(value, allow_zero: bool):
 	if not direction.is_finite() or direction.length_squared()>1.01: return null
 	if not allow_zero and direction.length_squared()<0.001: return null
 	return direction
+
+func _mouse_aim(value):
+	if not value is Array or value.size() != 3:
+		return null
+	for component in value:
+		if not _number(component): return null
+	var direction := Vector3(float(value[0]), float(value[1]), float(value[2]))
+	if not direction.is_finite() or direction.length_squared() < 0.8 or direction.length_squared() > 1.01:
+		return null
+	if absf(direction.y) > sin(deg_to_rad(35.0)) + 0.001:
+		return null
+	return direction.normalized()
 
 func _admit(peer_id: String, ip: String, port: int) -> void:
 	if not peers.has(peer_id):

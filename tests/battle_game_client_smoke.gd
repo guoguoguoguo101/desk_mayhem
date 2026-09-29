@@ -23,10 +23,13 @@ func _ready() -> void:
 		push_error("BATTLE_GAME_CLIENT default address missing")
 		get_tree().quit(1)
 		return
+	var requested_map := "courtyard"
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--port="):
 			network.session_port = int(arg.trim_prefix("--port="))
-	network.start_battle_client()
+		if arg.begins_with("--map="):
+			requested_map = arg.trim_prefix("--map=")
+	network.start_battle_client_at(requested_map, network.session_port)
 
 func _process(_delta: float) -> void:
 	if network.phase == "play" and network.using_battle_server():

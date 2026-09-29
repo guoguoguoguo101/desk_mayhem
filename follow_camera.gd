@@ -14,20 +14,44 @@ const AIM_UP_LIMIT := 42.0
 var shake_amount := 0.0
 var shake_clock := 0.0
 var aim_pitch := 0.0
+var alt_released_mouse := false
 
 func _ready() -> void:
 	global_position = player.global_position + Vector3.UP * 1.15
 	spring_arm.add_excluded_object(player.get_rid())
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		alt_released_mouse = false
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+func _input(event: InputEvent) -> void:
+	if not event is InputEventKey or (event.keycode != KEY_ALT and event.physical_keycode != KEY_ALT):
+		return
+	var net := get_tree().get_first_node_in_group("network")
+	if net and net.has_method("has_menu_open") and net.has_menu_open():
+		return
+	if event.pressed:
+		if not event.echo and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+			alt_released_mouse = true
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	elif alt_released_mouse:
+		alt_released_mouse = false
+		if get_window().has_focus():
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
 func _unhandled_input(event: InputEvent) -> void:
 	var net := get_tree().get_first_node_in_group("network")
 	if net and net.has_method("has_menu_open") and net.has_menu_open():
 		return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		alt_released_mouse = false
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		return
 	if event is InputEventMouseButton and event.pressed and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE:
+		if Input.is_key_pressed(KEY_ALT) or alt_released_mouse:
+			return
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		get_viewport().set_input_as_handled()
 		return

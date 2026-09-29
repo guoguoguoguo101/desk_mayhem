@@ -1,0 +1,48 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://vfx/fox_umbrella_spirit_vfx.gd" id="1_script"]
+
+[node name="FoxUmbrellaSpiritVFX" type="Node3D"]
+script = ExtResource("1_script")
+
+[node name="SpiritRoot" type="Node3D" parent="."]
+
+[node name="FoxSpirit" type="Sprite3D" parent="SpiritRoot"]
+
+[node name="FoxTrailShort" type="Sprite3D" parent="SpiritRoot"]
+
+[node name="FoxTrailLong" type="Sprite3D" parent="SpiritRoot"]
+
+[node name="FoxTailEnergy" type="Sprite3D" parent="SpiritRoot"]
+
+[node name="FoxGlow" type="Sprite3D" parent="SpiritRoot"]
+
+[node name="GlowWisp" type="Sprite3D" parent="SpiritRoot"]
+
+[node name="SpinRing" type="Sprite3D" parent="."]
+
+[node name="SubRing" type="Sprite3D" parent="."]
+
+[node name="EnergyArc" type="Sprite3D" parent="."]
+
+[node name="EnergySlash" type="Sprite3D" parent="."]
+
+[node name="Petals" type="Node3D" parent="."]
+
+[node name="PetalA" type="Sprite3D" parent="Petals"]
+
+[node name="PetalB" type="Sprite3D" parent="Petals"]
+
+[node name="PetalSwirl" type="Sprite3D" parent="Petals"]
+
+[node name="Sparks" type="Node3D" parent="."]
+
+[node name="SparkA" type="Sprite3D" parent="Sparks"]
+
+[node name="SparkB" type="Sprite3D" parent="Sparks"]
+
+[node name="HitRing" type="Sprite3D" parent="."]
+
+[node name="ImpactFlash" type="Sprite3D" parent="."]
+
+[node name="ImpactBurst" type="Sprite3D" parent="."]

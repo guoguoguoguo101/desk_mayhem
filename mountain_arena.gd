@@ -6,6 +6,7 @@ const PLACEMENTS_PATH := "res://assets/environment/mountain_arena/kit_placements
 const KIT_DIR := "res://assets/environment/kits/"
 const ARENA_FLOOR_DIR := "res://assets/environment/arena_floor/"
 const ARENA_FLOOR_Y := 0.045
+const FIRE_PROP_SCENE := preload("res://assets/vfx/fire_prop/FireProp_BillboardDemo.tscn")
 const PAVER_SPECULAR := 0.08
 # 进演武场后按 F7 轮换。数值是太阳、环境光和背景色，不改战斗。
 # 第 2 渲染层只给人物轮廓光，场景网格不在这一层。
@@ -91,6 +92,10 @@ func build() -> void:
 	place_arena_floor()
 	var paving := preload("res://courtyard_paving.gd").new()
 	add_child(paving)
+	# Purely visual teaching prop near the west entrance, away from the duel circle.
+	var fire_prop := FIRE_PROP_SCENE.instantiate()
+	fire_prop.position = Vector3(-20.0, ARENA_FLOOR_Y + 0.02, 7.0)
+	add_child(fire_prop)
 	for entry in Layout.collision_entries():
 		add_layout_collider(entry)
 

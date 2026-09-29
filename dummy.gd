@@ -128,7 +128,10 @@ func take_hit(attack_name: String = "文件夹") -> void:
 	if attack_name == "踢飞":
 		heavy = true
 		shake_combo = maxi(combo, 6)
-	feedback.impact(global_position + Vector3.UP * 1.2, heavy, shake_combo, "-%d" % damage)
+	if attack_name == "旋伞":
+		feedback.spirit_hit_feedback(global_position + Vector3.UP * 1.2, "-%d" % damage)
+	else:
+		feedback.impact(global_position + Vector3.UP * 1.2, heavy, shake_combo, "-%d" % damage)
 	if player != null and attack_name != "椅推" and attack_name != "办公椅":
 		var pause := 0.09 if heavy else 0.055
 		if attack_name == "踢飞":

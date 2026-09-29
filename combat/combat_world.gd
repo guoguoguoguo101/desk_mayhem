@@ -31,10 +31,12 @@ const ATTACKS := {
 	"umbrella_uppercut": {"name": "雨伞挑飞", "motion": "umbrella_launch"},
 	"umbrella_spin": {"name": "旋伞", "motion": ""},
 	"pot_slam": {"name": "扣锅", "motion": "ground_slam"},
+	"mouse_cast": {"name": "甩鼠标", "motion": ""},
+	"mouse_cut": {"name": "剪切闪", "motion": "mouse_launch"},
 }
 
 
-const SCHEMA := 4
+const SCHEMA := 5
 const DUMMY_SPAWNS := ArenaLayout.DUMMY_SPAWNS
 var map_id := ArenaCatalog.COURTYARD
 var arena_layout = ArenaLayout
@@ -114,10 +116,13 @@ func step(commands: Array = []) -> Array:
 		while receipts.size()>128: receipts.erase(receipts.keys()[0])
 		state.command_receipts = receipts
 	_simulate_players(Motion.DT)
+	_tick_mouse_links()
 	for request in actions:
 		var action: Dictionary = request.action
 		_resolve_attack(str(request.entity_id),str(action.attack),false,action.aim,false,-1,-1,int(action.attack_seq))
+	_advance_mouse_cut()
 	_advance_timelines(Motion.DT)
+	_advance_mouse_projectiles()
 	return events
 
 func _simulate_players(delta: float) -> void:
@@ -248,6 +253,20 @@ func _create_entity(kind: String, slot: int, position: Vector3) -> String:
 	next_entity_id += 1
 	var hp := 2000 if kind=="dummy" else 400
 	entities[id] = {"entity_id":id,"kind":kind,"controller":"passive" if kind=="dummy" else "player","slot":slot,"team_id":-1 if kind=="dummy" else slot,"max_health":hp,"health":hp,"spawn":position,"position":position,"velocity":Vector3.ZERO,"move":Vector3.ZERO,"facing":Vector3.RIGHT if slot==0 else Vector3.LEFT,"input_seq":0,"inputs":{},"life":1,"dead":false,"death_count":0,"respawn_at":0,"body":Motion.character(world,position)}
+	entities[id].mouse_projectile = {}
+	entities[id].mouse_link_id = ""
+	entities[id].mouse_link_life = 0
+	entities[id].mouse_link_until = 0
+	entities[id].mouse_cast_ready = 0
+	entities[id].mouse_skill2_ready = 0
+	entities[id].mouse_air_hold = 0.0
+	entities[id].mouse_air_used = false
+	entities[id].mouse_air_direction = Vector3.ZERO
+	entities[id].mouse_cut_path = []
+	entities[id].mouse_cut_targets = {}
+	entities[id].mouse_cut_blocked = false
+	entities[id].mouse_cut_start = position
+	entities[id].mouse_cut_end = position
 	if kind=="dummy":
 		Motion.configure_dummy(entities[id].body,false)
 	return id
@@ -283,7 +302,7 @@ func _remember_attack(attacker: Dictionary, intent_id: String, aim: Vector3, vie
 	attacker.buffer_until = now + BattleRules.BUFFER_MS
 
 func _attack_mark(state: Dictionary) -> String:
-	return "%s|%s|%s|%s|%s" % [state.get("action", ""), state.get("action_tick", 0), state.get("dash", 0), state.get("followup", 0), pots.has(str(state.get("entity_id", "")))]
+	return "%s|%s|%s|%s|%s|%s|%s|%s|%s" % [state.get("action", ""), state.get("action_tick", 0), state.get("dash", 0), state.get("followup", 0), pots.has(str(state.get("entity_id", ""))), state.get("mouse_link_id", ""), state.get("mouse_cast_ready", 0), state.get("mouse_skill2_ready", 0), state.get("cooldown_blink", 0)]
 
 func _release_buffered_attack(id: String) -> void:
 	if not entities.has(id):
@@ -347,6 +366,337 @@ func _try_blink(attacker: Dictionary, direction: Vector3, now: int, attack_seq: 
 		attacker.dash = 0.0
 	_broadcast({"type":"blink","slot":attacker.slot,"attack_seq":attack_seq,"from":[start.x,start.y,start.z],"to":[attacker.position.x,attacker.position.y,attacker.position.z]})
 
+func _mouse_link_valid(state: Dictionary) -> bool:
+	var target_id := str(state.get("mouse_link_id", ""))
+	if target_id.is_empty() or server_tick >= int(state.get("mouse_link_until", 0)) or not entities.has(target_id):
+		return false
+	var target: Dictionary = entities[target_id]
+	return int(state.get("health", 0)) > 0 and not bool(state.get("dead", false)) and int(target.get("health", 0)) > 0 and not bool(target.get("dead", false)) and int(target.get("life", 0)) == int(state.get("mouse_link_life", -1))
+
+func _clear_mouse_link(state: Dictionary) -> void:
+	if str(state.get("mouse_link_id", "")).is_empty():
+		return
+	state.mouse_link_id = ""
+	state.mouse_link_life = 0
+	state.mouse_link_until = 0
+	state.mouse_cast_ready = now_ms() + BattleRules.cooldown_ms("mouse_cast")
+
+func _tick_mouse_links() -> void:
+	for state in entities.values():
+		if not str(state.get("mouse_link_id", "")).is_empty() and not _mouse_link_valid(state):
+			_clear_mouse_link(state)
+
+func _resolve_mouse_action(attacker_id: String, intent_id: String, requested_aim: Vector3, attack_seq: int, from_buffer: bool) -> void:
+	if map_id != ArenaCatalog.MOUNTAIN_COURTYARD:
+		_deny_attack(attacker_id, attack_seq)
+		return
+	var attacker: Dictionary = entities[attacker_id]
+	var now := now_ms()
+	if _link_closed(attacker, intent_id):
+		if not from_buffer and _buffer_press(attacker, intent_id):
+			_remember_attack(attacker, intent_id, requested_aim, -1, attack_seq)
+		elif not from_buffer:
+			_deny_attack(attacker_id, attack_seq)
+		return
+	if intent_id == "mouse_cast":
+		if now < int(attacker.get("mouse_cast_ready", 0)) or not str(attacker.get("mouse_link_id", "")).is_empty() or not attacker.get("mouse_projectile", {}).is_empty():
+			_deny_attack(attacker_id, attack_seq)
+			return
+		var horizontal := Direction.resolve(attacker.facing, requested_aim)
+		var pitch_y := clampf(requested_aim.y, -sin(deg_to_rad(35.0)), sin(deg_to_rad(35.0)))
+		var flight_direction := (horizontal * sqrt(maxf(0.0, 1.0 - pitch_y * pitch_y)) + Vector3.UP * pitch_y).normalized()
+		attacker.facing = horizontal
+		attacker.action = "mouse_cast"
+		attacker.action_tick = server_tick
+		attacker.action_cursor = 0
+		attacker.action_serial = next_action_serial
+		attacker.action_seq = attack_seq
+		attacker.action_direction = flight_direction
+		attacker.lock = float(BattleRules.MOUSE_CAST_STARTUP + 1) / BattleRules.PHYSICS_HZ
+		attacker.end_tick = server_tick + BattleRules.MOUSE_CAST_STARTUP + 1
+		attacker.cancel_tick = attacker.end_tick
+		attacker.buffer_attack = ""
+		attacker.buffer_seq = -1
+		next_action_serial += 1
+		_broadcast({"type":"action_start","slot":attacker.slot,"attack":"mouse_cast","tick":server_tick,"hit_tick":server_tick+BattleRules.MOUSE_CAST_STARTUP,"end_tick":attacker.end_tick})
+		return
+	if intent_id == "mouse_pull":
+		if not _mouse_link_valid(attacker):
+			_deny_attack(attacker_id, attack_seq)
+			return
+		var target_id := str(attacker.mouse_link_id)
+		var target: Dictionary = entities[target_id]
+		var previous: Vector3 = target.position
+		var toward: Vector3 = attacker.position - target.position
+		if not bool(target.get("juggled", false)):
+			toward.y = 0.0
+		elif absf(toward.y) > 2.0:
+			toward.y = signf(toward.y) * 2.0
+		var travel := toward.normalized() * minf(toward.length(), BattleRules.MOUSE_PULL_DISTANCE) if toward.length_squared() > 0.0001 else Vector3.ZERO
+		if travel.length_squared() > 0.0001:
+			target.body.move_and_collide(travel)
+			target.position = target.body.global_position
+		target.stun = maxf(float(target.get("stun", 0.0)), BattleRules.MOUSE_PULL_STUN)
+		var velocity: Vector3 = target.get("velocity", Vector3.ZERO)
+		velocity.x = 0.0
+		velocity.z = 0.0
+		target.velocity = velocity
+		attacker.lock = 0.12
+		attacker.action_seq = attack_seq
+		_clear_mouse_link(attacker)
+		_broadcast({"type":"mouse_pull","entity_id":attacker_id,"target_id":target_id,"attack_seq":attack_seq,"from":[previous.x,previous.y,previous.z],"to":[target.position.x,target.position.y,target.position.z]})
+		return
+	if now < int(attacker.get("mouse_skill2_ready", 0)):
+		_deny_attack(attacker_id, attack_seq)
+		return
+	if intent_id == "mouse_swap":
+		if not _mouse_link_valid(attacker):
+			if not attacker.get("mouse_projectile", {}).is_empty():
+				if not from_buffer:
+					_remember_attack(attacker, intent_id, requested_aim, -1, attack_seq)
+				return
+			_deny_attack(attacker_id, attack_seq)
+			return
+		var target_id := str(attacker.mouse_link_id)
+		var target: Dictionary = entities[target_id]
+		if not _mouse_swap_clear(attacker, target):
+			_deny_attack(attacker_id, attack_seq)
+			return
+		var source: Vector3 = attacker.position
+		var destination: Vector3 = target.position
+		attacker.body.global_position = destination
+		target.body.global_position = source
+		attacker.position = destination
+		target.position = source
+		for state in [attacker, target]:
+			var velocity: Vector3 = state.get("velocity", Vector3.ZERO)
+			velocity.x = 0.0
+			velocity.z = 0.0
+			state.velocity = velocity
+			state.stun = maxf(float(state.get("stun", 0.0)), BattleRules.MOUSE_SWAP_STUN)
+		attacker.action_seq = attack_seq
+		attacker.mouse_skill2_ready = now + BattleRules.cooldown_ms("mouse_swap")
+		_clear_mouse_link(attacker)
+		_broadcast({"type":"mouse_swap","entity_id":attacker_id,"target_id":target_id,"attack_seq":attack_seq,"from":[source.x,source.y,source.z],"to":[destination.x,destination.y,destination.z]})
+		return
+	if intent_id == "mouse_cut":
+		if _mouse_link_valid(attacker):
+			_deny_attack(attacker_id, attack_seq)
+			return
+		var cut_direction := Direction.resolve(attacker.facing, requested_aim)
+		attacker.facing = cut_direction
+		attacker.action = "mouse_cut"
+		attacker.action_tick = server_tick
+		attacker.action_cursor = 0
+		attacker.action_serial = next_action_serial
+		attacker.action_seq = attack_seq
+		attacker.action_direction = cut_direction
+		attacker.mouse_cut_start = attacker.position
+		attacker.mouse_cut_end = attacker.position
+		attacker.mouse_cut_path = []
+		attacker.mouse_cut_targets = {}
+		attacker.mouse_cut_blocked = false
+		attacker.lock = float(BattleRules.MOUSE_CUT_END_TICK) / BattleRules.PHYSICS_HZ
+		attacker.end_tick = server_tick + BattleRules.MOUSE_CUT_END_TICK
+		attacker.cancel_tick = attacker.end_tick
+		attacker.mouse_skill2_ready = now + BattleRules.cooldown_ms("mouse_cut")
+		attacker.buffer_attack = ""
+		attacker.buffer_seq = -1
+		next_action_serial += 1
+		_broadcast({"type":"action_start","slot":attacker.slot,"attack":"mouse_cut","tick":server_tick,"hit_tick":server_tick+BattleRules.MOUSE_CUT_DAMAGE_TICK,"end_tick":attacker.end_tick})
+		return
+	_deny_attack(attacker_id, attack_seq)
+
+func _mouse_swap_clear(attacker: Dictionary, target: Dictionary) -> bool:
+	var space := world.get_world_3d().direct_space_state
+	for pair in [[attacker, target.position], [target, attacker.position]]:
+		var actor: Dictionary = pair[0]
+		var destination: Vector3 = pair[1]
+		var query := PhysicsShapeQueryParameters3D.new()
+		query.shape = actor.body.get_child(0).shape
+		query.transform = Transform3D(Basis(), destination)
+		query.collision_mask = 128 | Motion.NPC_LAYER
+		query.exclude = [attacker.body.get_rid(), target.body.get_rid()]
+		for collision in space.intersect_shape(query, 8):
+			var collider: Object = collision.get("collider")
+			if collider is Node and str(collider.get_meta("arena_layout_id", "")) == "floor":
+				continue
+			return false
+	return true
+
+func _spawn_mouse_projectile(attacker_id: String, attack_seq: int) -> void:
+	var attacker: Dictionary = entities[attacker_id]
+	var direction: Vector3 = attacker.get("action_direction", attacker.facing)
+	var flat := Direction.horizontal(direction)
+	var origin: Vector3 = attacker.position + Vector3.UP * 0.46 + flat * 0.55
+	attacker.mouse_projectile = {"position":origin,"direction":direction.normalized(),"distance":0.0,"attack_seq":attack_seq,"owner_life":int(attacker.life)}
+	_broadcast({"type":"mouse_launch","entity_id":attacker_id,"attack_seq":attack_seq,"position":[origin.x,origin.y,origin.z],"direction":[direction.x,direction.y,direction.z]})
+
+func _advance_mouse_projectiles() -> void:
+	if map_id != ArenaCatalog.MOUNTAIN_COURTYARD:
+		return
+	for attacker_id in entities.keys():
+		var attacker: Dictionary = entities[attacker_id]
+		var flight: Dictionary = attacker.get("mouse_projectile", {})
+		if flight.is_empty():
+			continue
+		if bool(attacker.get("dead", false)) or int(attacker.life) != int(flight.owner_life):
+			attacker.mouse_projectile = {}
+			continue
+		var start: Vector3 = flight.position
+		var remaining := BattleRules.MOUSE_RANGE - float(flight.distance)
+		var amount := minf(BattleRules.MOUSE_SPEED * Motion.DT, remaining)
+		if amount <= 0.001:
+			_finish_mouse_miss(attacker_id, int(flight.attack_seq))
+			continue
+		var aimed: Vector3 = flight.direction
+		var horizontal := Direction.horizontal(aimed)
+		var pitch_blend := clampf((float(flight.distance) + amount * 0.5) / BattleRules.MOUSE_PITCH_RAMP_DISTANCE, 0.0, 1.0)
+		var step_direction := (horizontal * sqrt(maxf(0.0, 1.0 - aimed.y * aimed.y * pitch_blend * pitch_blend)) + Vector3.UP * aimed.y * pitch_blend).normalized()
+		var finish: Vector3 = start + step_direction * amount
+		var wall_fraction := _mouse_wall_fraction(start, finish)
+		var target_id := ""
+		var first := wall_fraction
+		for victim_id in entities.keys():
+			if victim_id == attacker_id:
+				continue
+			var victim: Dictionary = entities[victim_id]
+			if bool(victim.get("dead", false)) or int(victim.get("health", 0)) <= 0 or float(victim.get("protection", 0.0)) > 0.0:
+				continue
+			var radius := BattleRules.MOUSE_CATCH_RADIUS + (0.27 if str(victim.kind) == "dummy" else 0.0)
+			var half_axis := BattleRules.MOUSE_CATCH_HALF_HEIGHT
+			var fraction := _mouse_capsule_fraction(start, finish, victim.position, radius, half_axis)
+			if fraction < first:
+				first = fraction
+				target_id = str(victim_id)
+		flight.position = start.lerp(finish, first)
+		flight.distance = float(flight.distance) + amount * first
+		attacker.mouse_projectile = flight
+		if not target_id.is_empty():
+			var target: Dictionary = entities[target_id]
+			attacker.mouse_projectile = {}
+			attacker.mouse_link_id = target_id
+			attacker.mouse_link_life = int(target.life)
+			attacker.mouse_link_until = server_tick + BattleRules.MOUSE_LINK_TICKS
+			target.stun = maxf(float(target.get("stun", 0.0)), 0.12)
+			_broadcast({"type":"mouse_link","entity_id":attacker_id,"target_id":target_id,"target_life":int(target.life),"attack_seq":int(flight.attack_seq),"position":[flight.position.x,flight.position.y,flight.position.z]})
+		elif wall_fraction < 1.0 or float(flight.distance) >= BattleRules.MOUSE_RANGE - 0.001:
+			_finish_mouse_miss(attacker_id, int(flight.attack_seq))
+
+func _finish_mouse_miss(attacker_id: String, seq: int) -> void:
+	var attacker: Dictionary = entities[attacker_id]
+	attacker.mouse_projectile = {}
+	attacker.mouse_cast_ready = now_ms() + BattleRules.cooldown_ms("mouse_cast")
+	_broadcast({"type":"mouse_miss","entity_id":attacker_id,"attack_seq":seq})
+
+func _mouse_wall_fraction(start: Vector3, finish: Vector3) -> float:
+	var query := PhysicsShapeQueryParameters3D.new()
+	var sphere := SphereShape3D.new()
+	sphere.radius = BattleRules.MOUSE_RADIUS
+	query.shape = sphere
+	query.transform = Transform3D(Basis(), start)
+	query.motion = finish - start
+	query.collision_mask = 128
+	var cast := world.get_world_3d().direct_space_state.cast_motion(query)
+	return clampf(cast[0], 0.0, 1.0) if cast.size() > 0 else 1.0
+
+func _mouse_capsule_fraction(start: Vector3, finish: Vector3, center: Vector3, radius: float, half_axis: float) -> float:
+	var low := 0.0
+	var high := 1.0
+	for _i in 12:
+		var left := lerpf(low, high, 0.333333)
+		var right := lerpf(low, high, 0.666667)
+		if _mouse_capsule_distance_sq(start.lerp(finish, left), center, half_axis) < _mouse_capsule_distance_sq(start.lerp(finish, right), center, half_axis):
+			high = right
+		else:
+			low = left
+	var closest := (low + high) * 0.5
+	if _mouse_capsule_distance_sq(start.lerp(finish, closest), center, half_axis) > radius * radius:
+		return INF
+	low = 0.0
+	high = closest
+	for _i in 14:
+		var mid := (low + high) * 0.5
+		if _mouse_capsule_distance_sq(start.lerp(finish, mid), center, half_axis) <= radius * radius:
+			high = mid
+		else:
+			low = mid
+	return high
+
+func _mouse_capsule_distance_sq(point: Vector3, center: Vector3, half_axis: float) -> float:
+	var axis := center + Vector3.UP * clampf(point.y - center.y, -half_axis, half_axis)
+	return point.distance_squared_to(axis)
+
+func _advance_mouse_cut() -> void:
+	if map_id != ArenaCatalog.MOUNTAIN_COURTYARD:
+		return
+	for attacker_id in entities.keys():
+		var attacker: Dictionary = entities[attacker_id]
+		if str(attacker.get("action", "")) != "mouse_cut" or bool(attacker.get("dead", false)):
+			continue
+		var elapsed := server_tick - int(attacker.action_tick)
+		if elapsed < BattleRules.MOUSE_CUT_STARTUP or elapsed >= BattleRules.MOUSE_CUT_STARTUP + BattleRules.MOUSE_CUT_TRAVEL_TICKS or bool(attacker.get("mouse_cut_blocked", false)):
+			continue
+		var start: Vector3 = attacker.position
+		var direction: Vector3 = attacker.action_direction
+		var distance := BattleRules.MOUSE_CUT_DISTANCE / float(BattleRules.MOUSE_CUT_TRAVEL_TICKS)
+		var body: CharacterBody3D = attacker.body
+		var previous_mask := body.collision_mask
+		body.collision_mask = 128
+		var wall := body.move_and_collide(direction * distance)
+		body.collision_mask = previous_mask
+		var finish: Vector3 = body.global_position
+		attacker.position = finish
+		attacker.mouse_cut_end = finish
+		var path: Array = attacker.get("mouse_cut_path", [])
+		path.append([start, finish])
+		attacker.mouse_cut_path = path
+		for victim_id in entities.keys():
+			if victim_id == attacker_id:
+				continue
+			var victim: Dictionary = entities[victim_id]
+			if bool(victim.get("dead", false)) or int(victim.get("health", 0)) <= 0 or float(victim.get("protection", 0.0)) > 0.0:
+				continue
+			if _mouse_cut_touches(start, finish, victim.position):
+				var targets: Dictionary = attacker.mouse_cut_targets
+				targets[str(victim_id)] = int(victim.life)
+				attacker.mouse_cut_targets = targets
+		if wall != null:
+			attacker.mouse_cut_blocked = true
+
+func _mouse_cut_touches(start: Vector3, finish: Vector3, target: Vector3) -> bool:
+	var flat := Vector2(finish.x-start.x, finish.z-start.z)
+	var offset := Vector2(target.x-start.x, target.z-start.z)
+	var ratio := clampf(offset.dot(flat) / maxf(flat.length_squared(), 0.00001), 0.0, 1.0)
+	var nearest := start.lerp(finish, ratio)
+	return Vector2(target.x-nearest.x, target.z-nearest.z).length() <= BattleRules.MOUSE_CUT_RADIUS and absf(target.y-nearest.y) <= BattleRules.MOUSE_CUT_HEIGHT
+
+func _mouse_cut_hits(attacker_id: String, seq: int, serial: int) -> Array:
+	var attacker: Dictionary = entities[attacker_id]
+	var start: Vector3 = attacker.get("mouse_cut_start", attacker.position)
+	var finish: Vector3 = attacker.get("mouse_cut_end", attacker.position)
+	var direction: Vector3 = attacker.get("action_direction", attacker.facing)
+	_broadcast({"type":"mouse_cut_burst","entity_id":attacker_id,"attack_seq":seq,"from":[start.x,start.y,start.z],"to":[finish.x,finish.y,finish.z]})
+	var hits: Array = []
+	var targets: Dictionary = attacker.get("mouse_cut_targets", {})
+	for victim_id in targets.keys():
+		if not entities.has(victim_id):
+			continue
+		var victim: Dictionary = entities[victim_id]
+		if int(victim.life) != int(targets[victim_id]) or bool(victim.get("dead", false)) or int(victim.get("health", 0)) <= 0 or float(victim.get("protection", 0.0)) > 0.0:
+			continue
+		var juggled := bool(victim.get("juggled", false)) and not bool(victim.get("bounce_pending", false))
+		var combat_state = CombatStateData.new()
+		combat_state.health = int(victim.health)
+		combat_state.max_health = int(victim.max_health)
+		combat_state.juggled = juggled
+		var resolved = CombatResolverData.resolve_hit(combat_state, "剪切闪", AttackCatalogData.PROFILE_PVP)
+		var presented := BattleRules.present_hit("mouse_cut", direction, victim.position.y, victim.get("velocity", Vector3.ZERO), juggled, bool(victim.get("kick_bounce", false)), bool(victim.get("bounce_pending", false)))
+		if juggled and bool(victim.get("mouse_air_used", false)):
+			presented.velocity = victim.get("velocity", Vector3.ZERO)
+		hits.append({"attacker_id":attacker_id,"victim_id":str(victim_id),"attack":"mouse_cut","attack_seq":seq,"serial":serial,"order":0,"damage":int(resolved.damage),"stun":float(presented.stun),"presented":presented,"rank":BattleRules.motion_rank("mouse_cut", juggled),"juggled_before":juggled})
+	return hits
+
 func _resolve_attack(attacker_id: String, intent_id: String, at_hit_frame := false, requested_aim := Vector3.ZERO, from_buffer := false, view_tick := -1, rewind_tick := -1, attack_seq := -1) -> void:
 	if not entities.has(attacker_id):
 		return
@@ -366,6 +716,9 @@ func _resolve_attack(attacker_id: String, intent_id: String, at_hit_frame := fal
 		# Q selection is authoritative; a second press can precede the next snapshot.
 		if intent_id == "umbrella_primary":
 			intent_id = "umbrella_uppercut" if now<int(attacker.get("followup",0)) else "dash"
+		if intent_id.begins_with("mouse_"):
+			_resolve_mouse_action(attacker_id, intent_id, requested_aim, attack_seq, from_buffer)
+			return
 		if intent_id == "returning_pot" and pots.has(attacker_id):
 			pots[attacker_id].returning = true
 			pots[attacker_id].recalled = true
@@ -373,6 +726,9 @@ func _resolve_attack(attacker_id: String, intent_id: String, at_hit_frame := fal
 		if intent_id not in ["punch","kick_front","umbrella_uppercut","umbrella_spin","pot_slam","dash","jump","blink","returning_pot"]:
 			return
 		if intent_id == "blink":
+			if str(attacker.get("action", "")) == "mouse_cast" and _link_closed(attacker, "blink") and not from_buffer:
+				_remember_attack(attacker, "blink", attack_direction, view_tick, attack_seq)
+				return
 			_try_blink(attacker, attack_direction, now, attack_seq, hit_reacting)
 			return
 		if _link_closed(attacker, intent_id):
@@ -623,6 +979,12 @@ func _commit_hits(hits: Array) -> void:
 		victim.buffer_seq = -1
 		victim.action = ""
 		victim.end_tick = server_tick
+		if str(chosen.attack) == "mouse_cut" and bool(chosen.juggled_before) and not bool(victim.get("mouse_air_used", false)):
+			victim.mouse_air_hold = BattleRules.MOUSE_AIR_HOLD
+			victim.mouse_air_used = true
+			victim.mouse_air_direction = entities[chosen.attacker_id].get("action_direction", Vector3.FORWARD)
+		elif str(chosen.attack) != "mouse_cut":
+			victim.mouse_air_hold = 0.0
 		victim.last_attacker = str(chosen.attacker_id)
 		victim.last_attack = str(chosen.attack)
 		victim.last_hit_tick = server_tick
@@ -719,6 +1081,12 @@ func _advance_timelines(delta := 0.0) -> void:
 			continue
 		if not bool(eligible.get(item.id, false)):
 			_deny_attack(str(item.id), int(item.get("attack_seq", -1)))
+			continue
+		if str(item.attack) == "mouse_cast":
+			_spawn_mouse_projectile(str(item.id), int(item.get("attack_seq", -1)))
+			continue
+		if str(item.attack) == "mouse_cut":
+			hits.append_array(_mouse_cut_hits(str(item.id), int(item.get("attack_seq", -1)), int(item.serial)))
 			continue
 		var rewind := _rewind_tick(int(item.view_tick), int(item.windup))
 		var hit := _probe_melee(str(item.id), str(item.attack), item.direction, rewind, int(item.get("attack_seq", -1)), int(item.serial))
@@ -851,6 +1219,12 @@ func _on_entity_death(attacker_id: String, victim_id: String, award_round := tru
 	victim.kick_bounce = false
 	victim.bounce_pending = false
 	victim.action = ""
+	victim.mouse_projectile = {}
+	victim.mouse_air_hold = 0.0
+	_clear_mouse_link(victim)
+	for owner in entities.values():
+		if str(owner.get("mouse_link_id", "")) == victim_id:
+			_clear_mouse_link(owner)
 	pots.erase(victim_id)
 	if victim.get("kind","player")=="dummy":
 		victim.respawn_at = now_ms()+3000
@@ -870,7 +1244,7 @@ func _respawn_entity(state: Dictionary) -> void:
 	state.velocity = Vector3.ZERO
 	state.move = Vector3.ZERO
 	state.inputs.clear()
-	for key in ["stun","lock","cancel_tick","end_tick","action_tick","hit_tick","ready_at","followup","dash_ready","combo","combo_until","dash","protection","respawn_at","cooldown_blink","cooldown_returning_pot","cooldown_pot_slam","cooldown_umbrella_spin"]:
+	for key in ["stun","lock","cancel_tick","end_tick","action_tick","hit_tick","ready_at","followup","dash_ready","combo","combo_until","dash","protection","respawn_at","cooldown_blink","cooldown_returning_pot","cooldown_pot_slam","cooldown_umbrella_spin","mouse_cast_ready","mouse_skill2_ready","mouse_link_until","mouse_link_life","mouse_air_hold"]:
 		state[key] = 0
 	for key in ["juggled","kick_bounce","bounce_pending","air_hold_used"]:
 		state[key] = false
@@ -879,6 +1253,13 @@ func _respawn_entity(state: Dictionary) -> void:
 	state.slam_hold = 0.0
 	state.pot_pose_tick = -1000
 	state.action = ""
+	state.mouse_projectile = {}
+	state.mouse_link_id = ""
+	state.mouse_air_used = false
+	state.mouse_air_direction = Vector3.ZERO
+	state.mouse_cut_path = []
+	state.mouse_cut_targets = {}
+	state.mouse_cut_blocked = false
 	state.action_cursor = 0
 	state.last_attacker = ""
 	state.last_attack = ""

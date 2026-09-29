@@ -10,6 +10,29 @@ const CD_SPIN := 2.2
 const CD_POT := 0.75
 const CD_SLAM := 2.0
 const CD_KICK := 0.65
+const MOUSE_CAST_STARTUP := 4
+const MOUSE_SPEED := 29.0
+const MOUSE_RANGE := 16.0
+const MOUSE_RADIUS := 0.24
+const MOUSE_LINK_TICKS := 300
+const MOUSE_PITCH_RAMP_DISTANCE := 2.0
+const MOUSE_CATCH_RADIUS := 0.68
+const MOUSE_CATCH_HALF_HEIGHT := 1.15
+const MOUSE_CAST_CD := 5.0
+const MOUSE_CUT_CD := 5.0
+const MOUSE_SWAP_CD := 6.0
+const MOUSE_PULL_DISTANCE := 2.7
+const MOUSE_PULL_STUN := 0.2
+const MOUSE_SWAP_STUN := 0.2
+const MOUSE_CUT_STARTUP := 4
+const MOUSE_CUT_TRAVEL_TICKS := 6
+const MOUSE_CUT_DISTANCE := 3.6
+const MOUSE_CUT_DAMAGE_TICK := 18
+const MOUSE_CUT_END_TICK := 30
+const MOUSE_CUT_RADIUS := 0.85
+const MOUSE_CUT_HEIGHT := 3.5
+const MOUSE_AIR_HOLD := 0.18
+const MOUSE_AIR_LIFT := 2.5
 const FOLLOWUP_WINDOW := 1.2
 const SPIN_DURATION := 0.48
 const SPIN_HIT_AT := 0.24
@@ -53,6 +76,8 @@ const SKILLS := {
 	"umbrella_spin": {"startup": 14, "active": 1, "recovery": 14, "cancel_delay": 3, "chainable": false, "reach": 3.0, "dot": -1.0, "height": 2.8, "effect": "spin", "name": "旋伞", "air_name": "旋伞", "motion": "", "air_motion": ""},
 	"pot_slam": {"startup": 28, "active": 1, "recovery": 14, "cancel_delay": 3, "chainable": true, "reach": 2.5, "dot": 0.1, "height": 3.5, "hop": "slam", "name": "扣锅", "air_name": "空中扣锅", "motion": "ground_slam", "air_motion": "air_slam"},
 	"pot_slam_air": {"startup": 12, "active": 1, "recovery": 7, "cancel_delay": 3, "chainable": true, "reach": 2.5, "dot": 0.1, "height": 3.5, "hop": "slam", "name": "扣锅", "air_name": "空中扣锅", "motion": "ground_slam", "air_motion": "air_slam"},
+	"mouse_cast": {"startup": MOUSE_CAST_STARTUP, "active": 1, "recovery": 0, "cancel_delay": 0, "chainable": false, "name": "甩鼠标", "air_name": "甩鼠标"},
+	"mouse_cut": {"startup": MOUSE_CUT_STARTUP, "active": MOUSE_CUT_TRAVEL_TICKS, "recovery": MOUSE_CUT_END_TICK-MOUSE_CUT_STARTUP-MOUSE_CUT_TRAVEL_TICKS, "cancel_delay": 0, "chainable": false, "name": "剪切闪", "air_name": "剪切闪", "motion": "mouse_launch", "air_motion": "mouse_air"},
 }
 
 static func is_punch(attack: String) -> bool:
@@ -72,6 +97,8 @@ static func skill_total(attack: String, aerial := false) -> int:
 ## Combat timeline only: hit, cancel, and end. Ticks are offsets from action_tick.
 ## Equal ticks run in this order. Animation and audio stay on the client.
 static func combat_timeline(attack: String, aerial := false) -> Array:
+	if attack == "mouse_cut":
+		return [{"tick": MOUSE_CUT_DAMAGE_TICK, "kind": "hit"}, {"tick": MOUSE_CUT_END_TICK, "kind": "end"}]
 	var frame := skill_frame(attack, aerial)
 	if frame.is_empty():
 		return []
@@ -93,6 +120,8 @@ static func action_move_scale(attack: String) -> float:
 		"umbrella_spin": return 0.6
 		"kick_front", "umbrella_uppercut": return 0.55
 		"pot_slam": return 0.35
+		"mouse_cast": return 0.7
+		"mouse_cut": return 0.0
 		_: return 0.65
 
 static func punch_frame(attack: String) -> Dictionary:
@@ -178,6 +207,19 @@ static func present_hit(attack: String, direction: Vector3, _height: float, velo
 		result.juggled = true
 		result.kick_bounce = false
 		result.bounce_pending = false
+	elif motion == "mouse_launch":
+		result.velocity = flat * 3.5 + Vector3.UP * 7.6
+		result.juggled = true
+		result.kick_bounce = false
+		result.bounce_pending = false
+		result.stun = 0.3
+	elif motion == "mouse_air":
+		result.velocity = flat * 2.0
+		result.velocity.y = 0.0
+		result.juggled = true
+		result.kick_bounce = false
+		result.bounce_pending = false
+		result.stun = 0.22
 	elif motion == "air_kick":
 		result.juggled = false
 		result.kick_bounce = true
@@ -213,6 +255,10 @@ static func motion_rank(attack: String, juggled_before: bool) -> int:
 		return 40
 	if motion in ["uppercut_launch", "umbrella_launch"]:
 		return 30
+	if motion == "mouse_launch":
+		return 30
+	if motion == "mouse_air":
+		return 20
 	if juggled_before and (bool(frame.get("air_hold", false)) or str(frame.get("effect", "")) == "spin" or attack.begins_with("returning_pot")):
 		return 20
 	if attack == "kick_front" or str(frame.get("effect", "")) == "spin" or attack.begins_with("returning_pot"):
@@ -267,6 +313,9 @@ static func cooldown(attack: String) -> float:
 		"pot_slam": return CD_SLAM
 		"returning_pot": return CD_POT
 		"kick_front": return CD_KICK
+		"mouse_cast": return MOUSE_CAST_CD
+		"mouse_cut": return MOUSE_CUT_CD
+		"mouse_swap": return MOUSE_SWAP_CD
 		"punch_uppercut": return 0.45
 		"punch_light", "punch_follow": return 0.28
 	return 0.0

@@ -24,7 +24,7 @@ const LIGHTNING_TEXTS: Array[Texture2D] = [
 	preload("res://assets/vfx/lightning_fork.png"),
 ]
 const WIND_TEX = preload("res://assets/vfx/wind_streak.png")
-const SPIN_FOX_LEAP = preload("res://assets/vfx/spin_fox_leap.png")
+const FOX_UMBRELLA_VFX = preload("res://vfx/FoxUmbrellaSpiritVFX.tscn")
 const ADDITIVE = preload("res://vfx/additive_sprite.gdshader")
 
 @onready var camera_rig: Node3D = get_node("../CameraRig")
@@ -36,14 +36,20 @@ var dash_idle := 0.0
 var dash_ribbon: MeshInstance3D
 var wind_trails := {}
 var limb_trails := {}
-var spin_foxes: Array = []
+var spin_spirits := {}
 
 func _process(delta: float) -> void:
 	ghost_wait = maxf(0.0, ghost_wait - delta)
 	_decay_dash(delta)
 	_decay_wind(delta)
 	_decay_limb(delta)
-	_advance_spin_foxes(delta)
+	for key in spin_spirits.keys():
+		var spirit: FoxUmbrellaSpiritVFX = spin_spirits[key]
+		if not is_instance_valid(spirit):
+			spin_spirits.erase(key)
+		elif not spirit.active:
+			spirit.queue_free()
+			spin_spirits.erase(key)
 
 func _decay_dash(delta: float) -> void:
 	if dash_points.is_empty():
@@ -76,7 +82,7 @@ func present_attack(attack: String, origin: Vector3, forward: Vector3, body: Nod
 		"umbrella_uppercut":
 			attack_arc(origin + Vector3.UP * 0.9, flat, 1.7, Color("85e2dd"), true)
 		"umbrella_spin":
-			spin_burst(origin + Vector3.UP * 0.3, true)
+			pass
 		"pot_slam", "pot_slam_air":
 			attack_arc(origin + Vector3.UP * 1.15, flat, 1.45, Color("ffb45a"), true)
 
@@ -411,70 +417,29 @@ func damage_popup(at: Vector3, text: String, heavy: bool) -> void:
 	tween.tween_property(label, "modulate:a", 0.0, 0.42)
 	tween.chain().tween_callback(label.queue_free)
 
-func spin_burst(at: Vector3, powered: bool) -> void:
-	if powered:
-		play_sound(SWING_SOUND, -2.0)
-	var color := Color("ffd36a") if powered else Color("9fd7ff")
-	burst_ring(at, 0.5, 3.1 if powered else 1.7, color)
-	burst_ring(at + Vector3.UP * 0.9, 0.22, 1.8 if powered else 1.05, Color("fffaf0"))
-	if not powered:
-		return
-	_sparks(at + Vector3.UP * 0.45, 16, color, true, Vector3.UP)
-	var disc := MeshInstance3D.new()
-	var quad := QuadMesh.new()
-	quad.size = Vector2(1.6, 0.7)
-	disc.mesh = quad
-	var tint := Color(0.7, 0.95, 1.0, 1.0)
-	disc.material_override = _additive_material(SLASH_UMBRELLA, tint, 2.3)
-	disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(disc)
-	disc.global_position = at + Vector3.UP * 0.4
-	disc.rotation.y = randf() * TAU
-	disc.rotation.x = -0.4
-	var mat := disc.material_override as ShaderMaterial
-	var tween := create_tween().set_parallel(true)
-	tween.tween_property(disc, "scale", Vector3(2.4, 1.2, 1.0), 0.18)
-	tween.tween_method(func(alpha: float) -> void:
-		mat.set_shader_parameter("tint", Color(tint.r, tint.g, tint.b, alpha))
-	, 1.0, 0.0, 0.18)
-	tween.chain().tween_callback(disc.queue_free)
-
-func spin_ghost(at: Vector3, yaw: float) -> void:
-	var ghost := MeshInstance3D.new()
-	var quad := QuadMesh.new()
-	quad.size = Vector2(1.5, 1.5)
-	ghost.mesh = quad
-	var tint := Color(0.75, 0.95, 1.0, 0.7)
-	ghost.material_override = _additive_material(RING_TEX, tint, 1.6)
-	ghost.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(ghost)
-	ghost.global_position = at
-	ghost.rotation.x = -PI * 0.5
-	ghost.rotation.y = yaw
-	var mat := ghost.material_override as ShaderMaterial
-	var tween := create_tween().set_parallel(true)
-	tween.tween_property(ghost, "scale", Vector3(1.8, 1.8, 1.8), 0.16)
-	tween.tween_method(func(alpha: float) -> void:
-		mat.set_shader_parameter("tint", Color(tint.r, tint.g, tint.b, alpha))
-	, 0.7, 0.0, 0.16)
-	tween.chain().tween_callback(ghost.queue_free)
-
 func play_spin_fox(body: Node3D, forward := Vector3.ZERO) -> void:
 	if body == null or not is_instance_valid(body):
 		return
-	var spirit := _make_spirit_fox()
-	var center := body.global_position
-	spirit.global_position = center
-	spin_foxes.append({
-		"age": 0.0,
-		"appear": 0.34,
-		"turn": 0.92,
-		"body": body,
-		"origin": center,
-		"forward": _spin_forward(body, forward),
-		"fox": spirit,
-		"ghost_wait": 0.1,
-	})
+	var key := body.get_instance_id()
+	if spin_spirits.has(key) and is_instance_valid(spin_spirits[key]):
+		(spin_spirits[key] as FoxUmbrellaSpiritVFX).queue_free()
+	var spirit := FOX_UMBRELLA_VFX.instantiate() as FoxUmbrellaSpiritVFX
+	add_child(spirit)
+	spirit.play(body, _spin_forward(body, forward))
+	spin_spirits[key] = spirit
+
+func spirit_hit(body: Node3D, at: Vector3) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var key := body.get_instance_id()
+	if spin_spirits.has(key) and is_instance_valid(spin_spirits[key]):
+		(spin_spirits[key] as FoxUmbrellaSpiritVFX).hit(at)
+
+func spirit_hit_feedback(at: Vector3, popup := "") -> void:
+	camera_rig.add_shake(0.18)
+	play_sound(HEAVY_SOUND, -0.5)
+	if popup != "":
+		damage_popup(at, popup, true)
 
 func _spin_forward(body: Node3D, forward: Vector3) -> Vector3:
 	var flat := forward
@@ -485,124 +450,6 @@ func _spin_forward(body: Node3D, forward: Vector3) -> Vector3:
 	if flat.length_squared() < 0.0001:
 		return Vector3.FORWARD
 	return flat.normalized()
-
-func _advance_spin_foxes(delta: float) -> void:
-	var done: Array[int] = []
-	for index in spin_foxes.size():
-		var act: Dictionary = spin_foxes[index]
-		act.age = float(act.age) + delta
-		var age := float(act.age)
-		var appear := float(act.appear)
-		var turn := float(act.turn)
-		var center := _spin_center(act)
-		var forward: Vector3 = act.forward
-		var right := forward.cross(Vector3.UP).normalized()
-		var angle := 0.0
-		var radius := 0.35
-		var scale := 0.18
-		var alpha := 0.0
-		var turning := age >= appear
-		if not turning:
-			var emerge := smoothstep(0.0, 1.0, age / appear)
-			radius = lerpf(0.95, 1.65, emerge)
-			scale = lerpf(0.4, 1.0, emerge)
-			alpha = emerge
-		else:
-			var lap := clampf((age - appear) / turn, 0.0, 1.0)
-			angle = lap * TAU
-			radius = 1.65
-			scale = 1.0
-			alpha = 1.0 - smoothstep(0.8, 1.0, lap)
-		var tangent := (-right * sin(angle) + forward * cos(angle)).normalized()
-		var spirit: MeshInstance3D = act.fox
-		spirit.global_position = center + (right * cos(angle) + forward * sin(angle)) * radius + Vector3.UP * 0.25
-		_aim_spirit(spirit, tangent, scale)
-		_spirit_alpha(spirit.material_override, alpha)
-		if turning and alpha > 0.35:
-			act.ghost_wait = float(act.ghost_wait) - delta
-			if float(act.ghost_wait) <= 0.0:
-				act.ghost_wait = 0.1
-				_spawn_spirit_ghost(spirit, alpha * 0.28)
-		if age >= appear + turn:
-			done.append(index)
-	for cursor in range(done.size() - 1, -1, -1):
-		_free_spin_fox(spin_foxes[done[cursor]])
-		spin_foxes.remove_at(done[cursor])
-
-func _spin_center(act: Dictionary) -> Vector3:
-	var body: Node3D = act.body
-	if body != null and is_instance_valid(body):
-		var center := body.global_position
-		center.y += 0.15
-		return center
-	return act.origin
-
-func _make_spirit_fox() -> MeshInstance3D:
-	var fox := MeshInstance3D.new()
-	var quad := QuadMesh.new()
-	quad.size = Vector2(1.45, 0.72)
-	fox.mesh = quad
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
-	mat.albedo_texture = SPIN_FOX_LEAP
-	mat.albedo_color = Color(1, 0.92, 0.7, 0)
-	mat.emission_enabled = true
-	mat.emission = Color(1.0, 0.78, 0.4)
-	mat.emission_texture = SPIN_FOX_LEAP
-	mat.emission_energy_multiplier = 0.0
-	fox.material_override = mat
-	fox.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(fox)
-	return fox
-
-func _aim_spirit(fox: MeshInstance3D, tangent: Vector3, scale: float) -> void:
-	var cam := get_viewport().get_camera_3d()
-	var to_cam := Vector3.BACK
-	if cam != null:
-		to_cam = cam.global_position - fox.global_position
-	var flat := Vector3(to_cam.x, 0.0, to_cam.z)
-	if flat.length_squared() < 0.0001:
-		flat = Vector3.BACK
-	to_cam = (flat.normalized() + Vector3.UP * 0.58).normalized()
-	var side := Vector3.UP.cross(to_cam)
-	if side.length_squared() < 0.0001:
-		side = Vector3.RIGHT
-	side = side.normalized()
-	if side.dot(tangent) > 0.0:
-		side = -side
-	var up := to_cam.cross(side).normalized()
-	var origin := fox.global_position
-	fox.global_transform = Transform3D(Basis(side, up, to_cam).scaled(Vector3(scale, scale, scale)), origin)
-
-func _spirit_alpha(material: Material, alpha: float) -> void:
-	var mat := material as StandardMaterial3D
-	if mat == null:
-		return
-	var color := mat.albedo_color
-	color.a = alpha
-	mat.albedo_color = color
-	mat.emission_energy_multiplier = 0.12 * alpha
-
-func _spawn_spirit_ghost(source: MeshInstance3D, alpha: float) -> void:
-	var ghost := _make_spirit_fox()
-	ghost.name = "SpinFoxGhost"
-	ghost.global_transform = source.global_transform
-	ghost.scale = source.scale * 0.92
-	_spirit_alpha(ghost.material_override, alpha)
-	var tween := create_tween()
-	tween.tween_method(func(amount: float) -> void:
-		_spirit_alpha(ghost.material_override, amount)
-	, alpha, 0.0, 0.22)
-	tween.tween_callback(ghost.queue_free)
-
-func _free_spin_fox(act: Dictionary) -> void:
-	var fox: MeshInstance3D = act.fox
-	if is_instance_valid(fox):
-		fox.queue_free()
 
 func body_ghost(source: Node3D, tint := Color(0.62, 0.88, 1.0, 0.42)) -> void:
 	if ghost_wait > 0.0 or source == null or not is_instance_valid(source):

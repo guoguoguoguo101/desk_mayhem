@@ -87,6 +87,10 @@ static func step(body: CharacterBody3D, state: Dictionary, move: Vector3, dt: fl
 	if float(state.get("dash",0.0)) > 0.0:
 		move = state.get("dash_direction",state.get("facing",Vector3.FORWARD))
 		speed = 15.0
+	elif str(state.get("action", "")) == "mouse_cut":
+		move = Vector3.ZERO
+		velocity.x = 0.0
+		velocity.z = 0.0
 	elif stunned or airborne or int(state.get("health",400)) <= 0:
 		move = Vector3.ZERO
 	elif float(state.get("lock",0.0)) > 0.0:
@@ -101,7 +105,18 @@ static func step(body: CharacterBody3D, state: Dictionary, move: Vector3, dt: fl
 		velocity.z = move_toward(velocity.z, target_velocity.z, response*dt)
 	if slam_hold > 0.0:
 		state.slam_hold = maxf(0.0, slam_hold - dt)
-	velocity.y -= (20.0 if bool(state.get("bounce_pending",false)) or not airborne else FloatRules.AIR_GRAVITY)*dt
+	var mouse_hold := float(state.get("mouse_air_hold", 0.0))
+	if mouse_hold > 0.0 and airborne:
+		velocity.y = 0.0
+		state.mouse_air_hold = maxf(0.0, mouse_hold - dt)
+		if float(state.mouse_air_hold) <= 0.0:
+			velocity.y = BattleRules.MOUSE_AIR_LIFT
+			var lift_direction: Vector3 = state.get("mouse_air_direction", Vector3.ZERO)
+			velocity.x = lift_direction.x * 2.0
+			velocity.z = lift_direction.z * 2.0
+	else:
+		state.mouse_air_hold = 0.0
+		velocity.y -= (20.0 if bool(state.get("bounce_pending",false)) or not airborne else FloatRules.AIR_GRAVITY)*dt
 	var remaining := velocity*dt
 	for _i in 4:
 		var hit := body.move_and_collide(remaining)
@@ -117,6 +132,8 @@ static func step(body: CharacterBody3D, state: Dictionary, move: Vector3, dt: fl
 					state.stun = FloatRules.KNOCKDOWN_TIME
 					state.protection = FloatRules.KNOCKDOWN_TIME
 				state.juggled = false
+				state.mouse_air_hold = 0.0
+				state.mouse_air_used = false
 				state.kick_bounce = false
 				velocity.y = 0.0
 		elif bool(state.get("kick_bounce",false)):

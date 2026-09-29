@@ -27,6 +27,7 @@ const ATTACKS := {
 	"办公椅": {"pvp": 8, "training": 8, "ranged": false},
 	"椅推": {"pvp": 4, "training": 4, "ranged": false},
 	"旋伞": {"pvp": 8, "training": 8, "ranged": false},
+	"剪切闪": {"pvp": 18, "training": 22, "ranged": false},
 }
 
 ## These are hit-validation definitions, not animation timing. The attacker

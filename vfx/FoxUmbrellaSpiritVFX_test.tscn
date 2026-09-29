@@ -1,0 +1,51 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://vfx/fox_umbrella_spirit_test.gd" id="1_script"]
+[ext_resource type="PackedScene" path="res://vfx/FoxUmbrellaSpiritVFX.tscn" id="2_effect"]
+[ext_resource type="PackedScene" path="res://assets/characters/fox_visual.tscn" id="3_fox"]
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_ground"]
+size = Vector2(12, 12)
+
+[sub_resource type="StandardMaterial3D" id="Material_ground"]
+albedo_color = Color(0.105, 0.116, 0.145, 1)
+roughness = 1.0
+
+[sub_resource type="Environment" id="Environment_stage"]
+background_mode = 1
+background_color = Color(0.075, 0.09, 0.125, 1)
+
+[node name="FoxUmbrellaSpiritVFXTest" type="Node3D"]
+script = ExtResource("1_script")
+
+[node name="Ground" type="MeshInstance3D" parent="."]
+mesh = SubResource("PlaneMesh_ground")
+material_override = SubResource("Material_ground")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_stage")
+
+[node name="Actor" type="Node3D" parent="."]
+position = Vector3(0, 0.95, 0)
+
+[node name="FoxVisual" parent="Actor" instance=ExtResource("3_fox")]
+
+[node name="FoxUmbrellaSpiritVFX" parent="." instance=ExtResource("2_effect")]
+
+[node name="Camera3D" type="Camera3D" parent="."]
+position = Vector3(0, 2.6, 5.2)
+current = true
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.8, -0.55, 0)
+light_energy = 1.2
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Instructions" type="Label" parent="CanvasLayer"]
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 760.0
+offset_bottom = 70.0
+theme_override_font_sizes/font_size = 22
+text = "E / Space: 重播    H: 模拟命中    R: 停止    ←→/A D: 绕视角    ↑↓: 高低"

@@ -970,7 +970,7 @@ func host_apply_hit(attacker: Node, target: Node, method: String, direction: Vec
 	if before > 0 and after <= 0:
 		rpc("register_kill", attacker_peer, "p:%d" % victim_peer)
 	var heavy := method in ["punch_launch", "launch_up", "slam_from_pot", "kick_from"]
-	if feedback and feedback.has_method("impact"):
+	if feedback and feedback.has_method("impact") and method != "umbrella_spin_from":
 		feedback.impact(hit_at + Vector3.UP * 1.15, heavy, int(attacker.get("combo_count")))
 	attacker.hit_pause = maxf(float(attacker.get("hit_pause")), 0.05 if heavy else 0.03)
 	return true
@@ -1171,7 +1171,7 @@ func receive_hit(method: String, attack_name: String, direction: Vector3, contac
 		landed = true
 	if landed and local_player.downed:
 		rpc("register_kill", sender, "p:%d" % multiplayer.get_unique_id())
-	if landed and feedback and feedback.has_method("impact"):
+	if landed and feedback and feedback.has_method("impact") and method != "umbrella_spin_from":
 		var heavy := method in ["punch_launch", "launch_up", "slam_from_pot"]
 		feedback.impact(local_player.global_position + Vector3.UP * 1.15, heavy)
 
@@ -1368,7 +1368,7 @@ func relay_hit(target: Node, method: String, direction: Vector3, attack_name: St
 		return false
 	rpc_id(peer_id, "receive_hit", method, attack_name, direction, target.global_position)
 	var heavy := method in ["punch_launch", "launch_up", "slam_from_pot"]
-	if feedback and feedback.has_method("impact"):
+	if feedback and feedback.has_method("impact") and method != "umbrella_spin_from":
 		feedback.impact(target.global_position + Vector3.UP * 1.15, heavy, local_player.combo_count)
 	local_player.hit_pause = maxf(local_player.hit_pause, 0.05 if heavy else 0.03)
 	return true

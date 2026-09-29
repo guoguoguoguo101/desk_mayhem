@@ -6,6 +6,7 @@ const Codec = preload("res://network/world_codec.gd")
 const Reliable = preload("res://network/reliable_events.gd")
 const BattleRules = preload("res://combat/battle_rules.gd")
 const PotVisual = preload("res://returning_pot.gd")
+const MouseVFX = preload("res://vfx/mouse_skill_vfx.gd")
 const DummyView = preload("res://client/battle_dummy_view.gd")
 const LOCAL_SMALL_CORRECTION := 0.15
 const LOCAL_SNAP_DISTANCE := 0.8
@@ -41,6 +42,8 @@ var pending_snapshot: Dictionary = {}
 var npc_views: Dictionary = {}
 var pot_visuals: Dictionary = {}
 var pot_targets: Dictionary = {}
+var mouse_vfx: Node3D
+var mouse_ghost_tick: Dictionary = {}
 var render_lives: Dictionary = {}
 var seen_events: Dictionary = {}
 var blink_events := 0
@@ -157,7 +160,9 @@ func _physics_process(_delta: float) -> void:
 func _wire_frame(frame: Dictionary) -> Dictionary:
 	var actions: Array = []
 	for action in frame.actions:
-		actions.append({"attack_seq":action.attack_seq,"attack":action.attack,"aim":[action.aim.x,action.aim.z]})
+		var action_aim: Vector3 = action.aim
+		var packed_aim := [action_aim.x, action_aim.y, action_aim.z] if str(action.attack) == "mouse_cast" else [action_aim.x, action_aim.z]
+		actions.append({"attack_seq":action.attack_seq,"attack":action.attack,"aim":packed_aim})
 	return {"seq":frame.seq,"tick":frame.tick,"round_id":frame.round_id,"life":frame.life,"move":[frame.move.x,frame.move.z],"aim":[frame.aim.x,frame.aim.z],"actions":actions}
 
 func _enter() -> void:
@@ -169,6 +174,9 @@ func _enter() -> void:
 	manager.begin_play(slot,true)
 	manager.local_player.loadout[0] = 0
 	manager.local_player.loadout[1] = 2
+	if server_map == "mountain_courtyard":
+		mouse_vfx = MouseVFX.new()
+		manager.get_parent().add_child(mouse_vfx)
 	manager.clear_arena_dummies()
 	original_layer = manager.local_player.collision_layer
 	original_mask = manager.local_player.collision_mask
@@ -181,10 +189,26 @@ func _enter() -> void:
 func request_action(action: String, aim: Vector3) -> void:
 	if not joined or round_over or queued_actions.size()>=4: return
 	var mapping := {"punch":"punch","kick":"kick_front","skill_a0":"umbrella_primary","skill_a1":"umbrella_spin","skill_b0":"returning_pot","skill_b1":"pot_slam","jump":"jump","blink":"blink"}
+	if action in ["mouse_primary", "mouse_secondary"]:
+		if replay.sim.map_id != "mountain_courtyard": return
+		var linked: bool = not str(predicted.get("mouse_link_id", "")).is_empty() and replay.sim.server_tick < int(predicted.get("mouse_link_until", 0))
+		var flying: bool = not predicted.get("mouse_projectile", {}).is_empty() or str(predicted.get("action", "")) == "mouse_cast"
+		if action == "mouse_primary":
+			mapping[action] = "mouse_pull" if linked else "mouse_cast"
+		else:
+			mapping[action] = "mouse_swap" if linked or flying else "mouse_cut"
 	if not mapping.has(action): return
 	next_attack_seq += 1
-	aim.y = 0
-	if aim.length_squared()<0.001: aim = predicted.get("facing",Vector3.FORWARD)
+	if mapping[action] == "mouse_cast":
+		var view: Vector3 = manager.local_player.camera_look().normalized()
+		var flat := Vector3(view.x, 0.0, view.z)
+		if flat.length_squared() < 0.001: flat = predicted.get("facing", Vector3.FORWARD)
+		flat = flat.normalized()
+		var vertical := clampf(view.y, -sin(deg_to_rad(35.0)), sin(deg_to_rad(35.0)))
+		aim = flat * sqrt(maxf(0.0, 1.0-vertical*vertical)) + Vector3.UP * vertical
+	else:
+		aim.y = 0
+		if aim.length_squared()<0.001: aim = predicted.get("facing",Vector3.FORWARD)
 	queued_actions.append({"attack_seq":next_attack_seq,"attack":mapping[action],"aim":aim.normalized()})
 	# Applied at the next local physics Tick (<=16.7ms), never waits for network.
 
@@ -288,6 +312,8 @@ func _body(id: String) -> Node:
 	return manager.local_player if index==slot else manager.puppet_for(index+1)
 
 func _render(delta: float) -> void:
+	if is_instance_valid(mouse_vfx):
+		mouse_vfx.sync_world(replay.sim.entities, replay.sim.server_tick, delta)
 	for id in replay.sim.entities:
 		var body := _body(str(id))
 		if body==null: continue
@@ -301,6 +327,11 @@ func _render(delta: float) -> void:
 		else:
 			body.global_position = target if body.global_position.distance_to(target)>2.0 else body.global_position.lerp(target,1.0-exp(-35.0*delta))
 		if state.kind=="player": _present_facing(body,state.facing,delta)
+		if is_instance_valid(mouse_vfx) and str(state.get("action", "")) == "mouse_cut":
+			var age: int = replay.sim.server_tick - int(state.get("action_tick", replay.sim.server_tick))
+			if age >= BattleRules.MOUSE_CUT_STARTUP and age < BattleRules.MOUSE_CUT_STARTUP + BattleRules.MOUSE_CUT_TRAVEL_TICKS and replay.sim.server_tick - int(mouse_ghost_tick.get(id, -100)) >= 2:
+				mouse_ghost_tick[id] = replay.sim.server_tick
+				if body.get("visual"): manager.feedback.body_ghost(body.visual, Color(0.28, 0.89, 1.0, 0.72))
 	for id in pot_visuals:
 		var visual = pot_visuals[id]
 		visual.global_position = visual.global_position.lerp(pot_targets[id],1.0-exp(-35.0*delta))
@@ -336,6 +367,8 @@ func _local_render_position(target: Vector3, delta: float) -> Vector3:
 
 func _event_key(event: Dictionary) -> String:
 	var type := str(event.get("type",""))
+	if type.begins_with("mouse_"):
+		return "%s|%s|%s|%s|%s" % [event.get("round_id",0),type,event.get("entity_id",""),event.get("attack_seq",-1),event.get("target_id","")]
 	if type=="combat":
 		return "%s|%s|%s|%s|%s|%s|%s" % [event.get("round_id",0),type,event.get("attacker_id",""),event.get("attack_seq",-1),event.get("victim_id",""),event.get("victim_life",0),event.get("attack","")]
 	if type in ["action_start","blink"]:
@@ -345,7 +378,7 @@ func _event_key(event: Dictionary) -> String:
 func _present_events(events: Array, authoritative: bool) -> void:
 	for event in events:
 		var type := str(event.get("type",""))
-		if type not in ["combat","blink","action_start"] and not authoritative: continue
+		if type not in ["combat","blink","action_start","mouse_launch","mouse_link","mouse_pull","mouse_swap","mouse_cut_burst","mouse_miss"] and not authoritative: continue
 		if type=="attack_result": continue
 		if int(event.get("round_id",round_id))<round_id: continue
 		var key := _event_key(event)
@@ -353,6 +386,17 @@ func _present_events(events: Array, authoritative: bool) -> void:
 		seen_events[key] = true
 		while seen_events.size()>512: seen_events.erase(seen_events.keys()[0])
 		match type:
+			"mouse_launch":
+				manager.feedback.play_swing()
+			"mouse_link":
+				if is_instance_valid(mouse_vfx): mouse_vfx.burst_link(vector(event.get("position", [])))
+				manager.feedback.impact(vector(event.get("position", [])), false)
+			"mouse_pull":
+				if is_instance_valid(mouse_vfx): mouse_vfx.burst_link(vector(event.get("to", [])) + Vector3.UP * 0.8)
+			"mouse_swap":
+				if is_instance_valid(mouse_vfx): mouse_vfx.burst_swap(vector(event.get("from", [])), vector(event.get("to", [])))
+			"mouse_cut_burst":
+				if is_instance_valid(mouse_vfx): mouse_vfx.burst_cut(vector(event.get("from", [])), vector(event.get("to", [])))
 			"combat":
 				var body := _body(str(event.get("victim_id","")))
 				if body==null: continue
@@ -360,7 +404,12 @@ func _present_events(events: Array, authoritative: bool) -> void:
 				var attack_name := str(event.get("attack",""))
 				var heavy := attack_name in ["punch_uppercut", "kick_front", "umbrella_uppercut", "umbrella_spin", "pot_slam", "pot_slam_air"]
 				var damage := int(event.get("damage", 0))
-				manager.feedback.impact(body.global_position + Vector3.UP * 0.9, heavy, 2 if heavy else 0, "-%d" % damage if damage > 0 else "", vector(event.get("velocity", [])))
+				if attack_name == "umbrella_spin":
+					var attacker := _body(str(event.get("attacker_id", "")))
+					manager.feedback.spirit_hit(attacker, body.global_position + Vector3.UP * 0.9)
+					manager.feedback.spirit_hit_feedback(body.global_position + Vector3.UP * 0.9, "-%d" % damage if damage > 0 else "")
+				else:
+					manager.feedback.impact(body.global_position + Vector3.UP * 0.9, heavy, 2 if heavy else 0, "-%d" % damage if damage > 0 else "", vector(event.get("velocity", [])))
 				if str(event.get("attacker_id",""))==entity_id:
 					manager.local_player.combo_count += 1
 					manager.local_player.combo_timer = 1.2
@@ -419,6 +468,7 @@ func shutdown() -> void:
 	local_correction_remaining = 0.0
 	for view in npc_views.values(): view.queue_free()
 	for id in pot_visuals.keys(): _remove_pot(id)
+	if is_instance_valid(mouse_vfx): mouse_vfx.queue_free()
 	replay.sim.dispose()
 	if transport:
 		_send({"type":"leave"})
@@ -457,10 +507,12 @@ func _present_facing(body: Node, direction: Vector3, delta: float) -> void:
 
 func _present_action_fx(body: Node, event: Dictionary) -> void:
 	var attack := str(event.get("attack", ""))
+	if attack in ["mouse_cast", "mouse_cut"]:
+		manager.feedback.play_swing()
+		return
 	var facing := vector(event.get("facing", []))
 	var delay := maxf(0.0, float(int(event.get("hit_tick", 0)) - int(event.get("tick", 0))) / 60.0)
 	if attack == "umbrella_spin":
-		manager.feedback.spin_burst(body.global_position + Vector3.UP * 0.2, false)
 		manager.feedback.play_spin_fox(body, facing)
 	if attack == "dash":
 		return

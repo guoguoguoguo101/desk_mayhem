@@ -1,0 +1,77 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://assets/vfx/fire_prop/fire_prop_billboard_demo.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://assets/vfx/fire_prop/fire_flame.png" id="2_flame"]
+[ext_resource type="Shader" path="res://assets/vfx/fire_prop/ground_fire.gdshader" id="3_ground"]
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_ground"]
+size = Vector2(1.25, 1.05)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_ground"]
+shader = ExtResource("3_ground")
+
+[node name="FireProp_BillboardDemo" type="Node3D"]
+script = ExtResource("1_script")
+
+[node name="GroundFire" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.018, 0)
+mesh = SubResource("PlaneMesh_ground")
+material_override = SubResource("ShaderMaterial_ground")
+cast_shadow = 0
+
+[node name="BillboardFire_A" type="Sprite3D" parent="."]
+texture = ExtResource("2_flame")
+pixel_size = 0.007
+billboard = 1
+shaded = false
+double_sided = true
+cast_shadow = 0
+
+[node name="BillboardFire_B" type="Sprite3D" parent="."]
+texture = ExtResource("2_flame")
+pixel_size = 0.007
+billboard = 1
+shaded = false
+double_sided = true
+cast_shadow = 0
+
+[node name="BillboardFire_C" type="Sprite3D" parent="."]
+texture = ExtResource("2_flame")
+pixel_size = 0.007
+billboard = 1
+shaded = false
+double_sided = true
+cast_shadow = 0
+
+[node name="BillboardFire_D" type="Sprite3D" parent="."]
+texture = ExtResource("2_flame")
+pixel_size = 0.007
+billboard = 1
+shaded = false
+double_sided = true
+cast_shadow = 0
+
+[node name="BillboardFire_E" type="Sprite3D" parent="."]
+texture = ExtResource("2_flame")
+pixel_size = 0.007
+billboard = 1
+shaded = false
+double_sided = true
+cast_shadow = 0
+
+[node name="Sparks" type="GPUParticles3D" parent="."]
+position = Vector3(0, 0.12, 0)
+amount = 8
+lifetime = 1.15
+visibility_aabb = AABB(-1.5, -0.1, -1.5, 3, 2.5, 3)
+cast_shadow = 0
+
+[node name="PointLight3D" type="OmniLight3D" parent="."]
+position = Vector3(0, 0.78, 0)
+light_color = Color(1, 0.52, 0.24, 1)
+light_energy = 0.65
+omni_range = 2.8
+shadow_enabled = false
+
+[node name="DebugRoot" type="Node3D" parent="."]
+visible = false

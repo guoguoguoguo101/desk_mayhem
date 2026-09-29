@@ -91,7 +91,6 @@ var uppercut_time := 0.0
 var spin_time := 0.0
 var spin_facing := 0.0
 var spin_hit_done := false
-var spin_ghost_time := 0.0
 var buffered_attack := ""
 var buffered_until := 0
 var umbrella_rest := Vector3.ZERO
@@ -317,11 +316,6 @@ func _process(delta: float) -> void:
 		if combo_timer<=0: combo_count = 0
 		walk_phase += delta*Vector2(velocity.x,velocity.z).length()*2.4
 		if not net_puppet: refresh_aim()
-		if spin_time>0:
-			spin_ghost_time -= delta
-			if spin_ghost_time<=0:
-				spin_ghost_time = 0.05
-				feedback.spin_ghost(global_position+Vector3.UP*0.35,visual.rotation.y)
 		if dash_time > 0.0:
 			dash_trail_time -= delta
 			if dash_trail_time <= 0.0:
@@ -359,11 +353,6 @@ func _process(delta: float) -> void:
 	if (not net_puppet or net_simulated) and not spin_hit_done and spin_before > SPIN_HIT_AT and spin_time <= SPIN_HIT_AT:
 		spin_hit_done = true
 		resolve_umbrella_spin()
-	if spin_time > 0.0:
-		spin_ghost_time -= delta
-		if spin_ghost_time <= 0.0:
-			spin_ghost_time = 0.05
-			feedback.spin_ghost(global_position + Vector3.UP * 0.35, visual.rotation.y)
 	if net_puppet and not net_simulated:
 		present_remote()
 		var shown := Vector2(velocity.x, velocity.z).length()
@@ -554,6 +543,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			action = "punch" if event.button_index == MOUSE_BUTTON_LEFT else ("kick" if event.button_index == MOUSE_BUTTON_RIGHT else "")
 		elif event is InputEventKey:
 			action = str({KEY_Q:"skill_a0",KEY_E:"skill_a1",KEY_F:"skill_b0",KEY_C:"skill_b1",KEY_SPACE:"jump",KEY_SHIFT:"blink"}.get(event.physical_keycode,""))
+			if str(battle_net.get("battle_map_id")) == "mountain_courtyard":
+				if event.physical_keycode == KEY_1: action = "mouse_primary"
+				if event.physical_keycode == KEY_2: action = "mouse_secondary"
 		if not action.is_empty():
 			battle_net.request_action(action,aim_direction())
 		return
@@ -827,17 +819,14 @@ func umbrella_spin() -> void:
 	spin_time = SPIN_DURATION
 	spin_facing = visual.rotation.y
 	spin_hit_done = false
-	spin_ghost_time = 0.0
 	action_lock = SPIN_DURATION
 	forced_facing = SPIN_DURATION
 	velocity.x = 0.0
 	velocity.z = 0.0
 	feedback.play_swing()
-	feedback.spin_burst(global_position + Vector3.UP * 0.2, false)
 	feedback.play_spin_fox(self, Vector3(-sin(spin_facing), 0.0, -cos(spin_facing)))
 
 func resolve_umbrella_spin() -> void:
-	feedback.spin_burst(global_position + Vector3.UP * 0.25, true)
 	var facing := Vector3(-sin(spin_facing), 0.0, -cos(spin_facing))
 	strike_radial_targets("umbrella_spin", facing)
 
@@ -1377,6 +1366,8 @@ func strike_radial_targets(intent_id: String, fallback_direction: Vector3) -> in
 		last_hit_intent = intent
 		if connect_hit(target, intent.effect_method, outward):
 			hits += 1
+			if intent_id == "umbrella_spin":
+				feedback.spirit_hit(self, target.global_position + Vector3.UP * 0.9)
 	if hits > 0:
 		register_combo(hits)
 	return hits
@@ -1502,7 +1493,10 @@ func take_hit(attack_name: String = "文件夹") -> void:
 	flinch_time = 0.2
 	flinch_side = 1.0 if randf() > 0.5 else -1.0
 	var heavy := attack_name in ["雨伞挑飞", "扣锅", "空中扣锅", "踢飞", "上勾拳"]
-	feedback.impact(global_position + Vector3.UP * 0.9, heavy, 0, "-%d" % damage, result.resulting_velocity)
+	if attack_name == "旋伞":
+		feedback.spirit_hit_feedback(global_position + Vector3.UP * 0.9, "-%d" % damage)
+	else:
+		feedback.impact(global_position + Vector3.UP * 0.9, heavy, 0, "-%d" % damage, result.resulting_velocity)
 	stagger_time = maxf(stagger_time, 0.28 if attack_name == "踢飞" else HITSTUN)
 	if health <= 0:
 		health = 0

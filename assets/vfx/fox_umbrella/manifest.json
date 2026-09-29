@@ -1,0 +1,57 @@
+{
+  "pack": "DeskMayhem_FoxUmbrella_VFX_AssetPack",
+  "fox_frames": [
+    "fox_01_hide.png",
+    "fox_02_emerge.png",
+    "fox_03_crouch.png",
+    "fox_04_jump.png",
+    "fox_05_fly.png",
+    "fox_06_turn.png",
+    "fox_07_spin.png",
+    "fox_08_dive.png",
+    "fox_09_sweep.png",
+    "fox_10_attack.png",
+    "fox_11_tail_sweep.png",
+    "fox_12_dissolve.png"
+  ],
+  "folders": {
+    "trail": [
+      "fox_tail_energy.png",
+      "fox_trail_long.png",
+      "fox_trail_short.png"
+    ],
+    "energy": [
+      "energy_arc.png",
+      "energy_slash.png",
+      "spin_ring.png",
+      "sub_ring.png"
+    ],
+    "particles": [
+      "energy_dot.png",
+      "petal_01.png",
+      "petal_02.png",
+      "petal_cluster.png",
+      "petal_swirl.png",
+      "spark_large.png",
+      "spark_medium.png",
+      "spark_small.png"
+    ],
+    "glow": [
+      "glow_cloud.png",
+      "glow_soft.png",
+      "glow_wisp.png"
+    ],
+    "impact": [
+      "hit_ring.png",
+      "impact_burst.png",
+      "impact_flash.png",
+      "impact_smoke.png"
+    ],
+    "extra": [
+      "energy_circle.png",
+      "petal_wave.png",
+      "slash_streak.png",
+      "wind_cloud.png"
+    ]
+  }
+}
