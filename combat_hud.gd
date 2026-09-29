@@ -85,7 +85,7 @@ func _ready() -> void:
 	add_child(equipment)
 	for _i in 4:
 		equip_ui.append(make_slot(equipment, Vector2(62, 72)))
-	for _i in 6:
+	for _i in 7:
 		var slot := make_slot(bar, Vector2(88, 98))
 		skill_ui.append(slot)
 
@@ -246,7 +246,8 @@ func _process(_delta: float) -> void:
 func apply_slot(ui: Dictionary, data: Dictionary) -> void:
 	var title: String = data["name"]
 	var symbol := "punch"
-	if "伞" in title or "冲锋" in title or "挑飞" in title: symbol = "spin" if "旋" in title else "umbrella"
+	if "闪" in title: symbol = "blink"
+	elif "伞" in title or "冲锋" in title or "挑飞" in title: symbol = "spin" if "旋" in title else "umbrella"
 	elif "扣锅" in title: symbol = "slam"
 	elif "锅" in title or "召回" in title: symbol = "pot"
 	elif "咖啡" in title or "投掷" in title: symbol = "drink" if "喝" in title else "coffee"

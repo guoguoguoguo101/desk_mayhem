@@ -320,6 +320,33 @@ func _nearby_juggled(attacker_id: String, reach: float, height_limit: float) -> 
 			return true
 	return false
 
+func _try_blink(attacker: Dictionary, direction: Vector3, now: int, attack_seq: int, hit_reacting: bool) -> void:
+	var attacker_id := str(attacker.get("entity_id", ""))
+	if float(attacker.get("dash", 0.0)) > 0.0 or now < int(attacker.get("cooldown_blink", 0)):
+		_deny_attack(attacker_id, attack_seq)
+		return
+	if not hit_reacting and float(attacker.get("lock", 0.0)) > 0.0:
+		_deny_attack(attacker_id, attack_seq)
+		return
+	var start: Vector3 = attacker.position
+	if not Motion.blink(attacker.body, attacker, direction, dynamic_blockers(attacker_id)):
+		_deny_attack(attacker_id, attack_seq)
+		return
+	attacker.facing = direction
+	attacker.cooldown_blink = now + BattleRules.cooldown_ms("blink")
+	if hit_reacting:
+		attacker.stun = 0.0
+		attacker.protection = 0.0
+		attacker.knockdown_time = 0.0
+		attacker.juggled = false
+		attacker.kick_bounce = false
+		attacker.bounce_pending = false
+		attacker.velocity = Vector3.ZERO
+		attacker.lock = 0.0
+		attacker.action = ""
+		attacker.dash = 0.0
+	_broadcast({"type":"blink","slot":attacker.slot,"attack_seq":attack_seq,"from":[start.x,start.y,start.z],"to":[attacker.position.x,attacker.position.y,attacker.position.z]})
+
 func _resolve_attack(attacker_id: String, intent_id: String, at_hit_frame := false, requested_aim := Vector3.ZERO, from_buffer := false, view_tick := -1, rewind_tick := -1, attack_seq := -1) -> void:
 	if not entities.has(attacker_id):
 		return
@@ -329,7 +356,8 @@ func _resolve_attack(attacker_id: String, intent_id: String, at_hit_frame := fal
 	var attacker: Dictionary = entities[attacker_id]
 	var attack_direction: Vector3 = requested_aim if at_hit_frame else Direction.resolve(attacker.facing,requested_aim)
 	var now := now_ms()
-	if int(attacker.health) <= 0 or float(attacker.get("stun",0.0)) > 0.0 or bool(attacker.get("juggled",false)) or bool(attacker.get("kick_bounce",false)):
+	var hit_reacting := float(attacker.get("stun",0.0)) > 0.0 or bool(attacker.get("juggled",false)) or bool(attacker.get("kick_bounce",false))
+	if int(attacker.health) <= 0 or (hit_reacting and intent_id != "blink"):
 		attacker.buffer_attack = ""
 		attacker.buffer_seq = -1
 		_deny_attack(attacker_id, attack_seq)
@@ -344,6 +372,9 @@ func _resolve_attack(attacker_id: String, intent_id: String, at_hit_frame := fal
 			return
 		if intent_id not in ["punch","kick_front","umbrella_uppercut","umbrella_spin","pot_slam","dash","jump","blink","returning_pot"]:
 			return
+		if intent_id == "blink":
+			_try_blink(attacker, attack_direction, now, attack_seq, hit_reacting)
+			return
 		if _link_closed(attacker, intent_id):
 			if not from_buffer and _buffer_press(attacker, intent_id):
 				_remember_attack(attacker, intent_id, attack_direction, view_tick, attack_seq)
@@ -352,18 +383,6 @@ func _resolve_attack(attacker_id: String, intent_id: String, at_hit_frame := fal
 			return
 		if not from_buffer:
 			attacker.buffer_attack = ""
-		if intent_id == "blink":
-			if float(attacker.get("lock",0))>0 or float(attacker.get("dash",0))>0 or now<int(attacker.get("cooldown_blink",0)):
-				_deny_attack(attacker_id, attack_seq)
-				return
-			var start: Vector3 = attacker.position
-			if Motion.blink(attacker.body,attacker,attack_direction,dynamic_blockers(attacker_id)):
-				attacker.facing = attack_direction
-				attacker.cooldown_blink = now+1800
-				_broadcast({"type":"blink","slot":attacker.slot,"attack_seq":attack_seq,"from":[start.x,start.y,start.z],"to":[attacker.position.x,attacker.position.y,attacker.position.z]})
-			else:
-				_deny_attack(attacker_id, attack_seq)
-			return
 		if intent_id == "returning_pot":
 			if float(attacker.get("dash",0))>0 or now<int(attacker.get("cooldown_returning_pot",0)):
 				_deny_attack(attacker_id, attack_seq)

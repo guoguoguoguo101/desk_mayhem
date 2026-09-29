@@ -130,6 +130,12 @@ func build() -> void:
 	var env: Environment = root.get_node("Environment").environment
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 0.65
+	env.glow_enabled = true
+	env.glow_intensity = 0.4
+	env.glow_strength = 0.7
+	env.glow_bloom = 0.1
+	env.glow_hdr_threshold = 1.05
+	env.glow_hdr_scale = 1.4
 	env.background_color = Color("91b3bf")
 	env.ambient_light_color = Color("c5d9e6")
 	env.ambient_light_energy = 0.22

@@ -76,6 +76,7 @@ func _ready() -> void:
 		if part is MeshInstance3D:
 			part.material_overlay = flash_material
 	dress_dummy()
+	preload("res://mountain_arena.gd").mark_character_rim(visual)
 	if can_throw:
 		var head := visual.get_node_or_null("Head")
 		if head is MeshInstance3D:

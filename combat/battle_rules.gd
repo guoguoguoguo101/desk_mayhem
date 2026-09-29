@@ -5,6 +5,7 @@ const BUFFER_MS := 150
 const GROUND_ACCEL := 46.0
 const GROUND_BRAKE := 65.0
 const CD_DASH := 1.5
+const CD_BLINK := 3.0
 const CD_SPIN := 2.2
 const CD_POT := 0.75
 const CD_SLAM := 2.0
@@ -261,6 +262,7 @@ static func slam_startup(velocity: Vector3, direction: Vector3, aerial: bool, on
 static func cooldown(attack: String) -> float:
 	match attack:
 		"dash": return CD_DASH
+		"blink": return CD_BLINK
 		"umbrella_spin": return CD_SPIN
 		"pot_slam": return CD_SLAM
 		"returning_pot": return CD_POT

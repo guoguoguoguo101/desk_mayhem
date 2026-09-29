@@ -64,6 +64,27 @@ func run() -> void:
 	entities[a].stun = 0.2
 	Motion.step(entities[a].body,entities[a],Vector3.RIGHT)
 	check(is_equal_approx(entities[a].position.x,-12.0),"hitstun still blocks voluntary movement")
+	place(a,Vector3(-12,0.96,0))
+	entities[a].velocity = Vector3.ZERO
+	entities[a].stun = 0.4
+	entities[a].lock = 0.3
+	entities[a].facing = Vector3.RIGHT
+	var stunned_at: Vector3 = entities[a].position
+	_resolve_attack(a,"blink",false,Vector3.RIGHT)
+	check(entities[a].position.x > stunned_at.x + 4.0 and float(entities[a].stun)==0.0 and float(entities[a].lock)==0.0,"blink escapes ground hitstun")
+	check(int(entities[a].get("cooldown_blink",0)) - sim.now_ms() > 2500,"blink cooldown is 3s")
+	entities[a].cooldown_blink = 0
+	place(a,Vector3(-12,3.0,0))
+	entities[a].juggled = true
+	entities[a].stun = 0.0
+	entities[a].velocity = Vector3(0,6,0)
+	var airborne_at: Vector3 = entities[a].position
+	_resolve_attack(a,"blink",false,Vector3.RIGHT)
+	check(entities[a].position.x > airborne_at.x + 4.0 and not bool(entities[a].juggled) and entities[a].velocity == Vector3.ZERO,"blink escapes juggle")
+	entities[a].cooldown_blink = 0
+	entities[a].stun = 0.4
+	_resolve_attack(a,"punch",false,Vector3.RIGHT)
+	check(str(entities[a].get("action",""))=="","hitstun still blocks punches")
 	place(a,Vector3(-12,2.0,0))
 	entities[a].stun = 0.0
 	entities[a].action = "punch_light"

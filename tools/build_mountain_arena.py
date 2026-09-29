@@ -1340,7 +1340,7 @@ def _paver_mesh(name, points, top_mat, side_mat, height=0.15, bevel=0.04):
         edge for edge in bm.edges
         if all(abs(vert.co.z - height) < 1e-5 for vert in edge.verts)
     ]
-    if top_edges:
+    if top_edges and bevel > 0.0:
         try:
             bmesh.ops.bevel(
                 bm, geom=top_edges, offset=bevel, segments=2, profile=0.55,
@@ -1382,7 +1382,7 @@ def build_paving_kits():
     # the corner occupies a 2 m square and leaves the +X/+Y quadrant empty in Blender.
     if KIT_DEFS.get("paving_square", {}).get("mesh"):
         return
-    side = _paving_image_mat("Paving Side", "paving_side.png", 0.9, repeat=True)
+    side = _paving_image_mat("Paving Side", "paving_side.png", 0.84, repeat=True)
     square = ((-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5))
     rect = ((-1.0, -0.5), (1.0, -0.5), (1.0, 0.5), (-1.0, 0.5))
     # Notch is Blender +X/+Y, which is Godot +X/-Z after the Y-up export.
@@ -1395,7 +1395,8 @@ def build_paving_kits():
     )
     for kit_id, description, points, filename in specs:
         top = _paving_image_mat(kit_id, filename, 0.84)
-        mesh = _paver_mesh(kit_id, points, top, side)
+        # Flat top, same as the arena-center tiles. A chamfer makes the rim face the sun.
+        mesh = _paver_mesh(kit_id, points, top, side, bevel=0.0)
         register_kit(kit_id, description, "base")
         KIT_DEFS[kit_id]["mesh"] = mesh
 
@@ -1452,6 +1453,198 @@ def _render_paving_preview():
     bpy.ops.render.render(write_still=True)
 
 
+def _rack_image(filename):
+    path = os.path.join(KIT_DIR, "textures", filename)
+    image = bpy.data.images.load(path, check_existing=True)
+    image.colorspace_settings.name = "sRGB"
+    image.alpha_mode = "STRAIGHT"
+    return image
+
+
+def _weapon_wood_mat():
+    material = bpy.data.materials.new("WeaponRackWood")
+    material.use_nodes = True
+    bsdf = material.node_tree.nodes.get("Principled BSDF")
+    bsdf.inputs["Roughness"].default_value = 0.62
+    specular = bsdf.inputs.get("Specular IOR Level")
+    if specular is not None:
+        specular.default_value = 0.22
+    tex = material.node_tree.nodes.new("ShaderNodeTexImage")
+    tex.image = _rack_image("weapon_rack_wood.png")
+    tex.interpolation = "Linear"
+    tex.extension = "REPEAT"
+    material.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    return material
+
+
+def _weapon_decal_mat(filename):
+    material = bpy.data.materials.new("WeaponDecal_%s" % filename)
+    material.use_nodes = True
+    material.use_backface_culling = False
+    if hasattr(material, "surface_render_method"):
+        material.surface_render_method = "BLENDED"
+    tree = material.node_tree
+    bsdf = tree.nodes.get("Principled BSDF")
+    bsdf.inputs["Roughness"].default_value = 0.4
+    specular = bsdf.inputs.get("Specular IOR Level")
+    if specular is not None:
+        specular.default_value = 0.35
+    tex = tree.nodes.new("ShaderNodeTexImage")
+    tex.image = _rack_image(filename)
+    tex.interpolation = "Linear"
+    tex.extension = "CLIP"
+    tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    tree.links.new(tex.outputs["Alpha"], bsdf.inputs["Alpha"])
+    return material
+
+
+def _uv_wood(obj, tile=0.32):
+    mesh = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    layer = bm.loops.layers.uv.new("UVMap")
+    for face in bm.faces:
+        normal = face.normal
+        for loop in face.loops:
+            co = loop.vert.co
+            if abs(normal.z) > 0.6:
+                uv = (co.x / tile, co.y / tile)
+            elif abs(normal.x) > abs(normal.y):
+                uv = (co.y / tile, co.z / tile)
+            else:
+                uv = (co.x / tile, co.z / tile)
+            loop[layer].uv = uv
+    bm.to_mesh(mesh)
+    bm.free()
+
+
+def _rack_box(name, center, size, material):
+    bpy.ops.mesh.primitive_cube_add(location=center)
+    obj = bpy.context.object
+    obj.name = name
+    obj.dimensions = size
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    obj.data.materials.append(material)
+    _uv_wood(obj)
+    return obj
+
+
+def _weapon_card(name, material, width, height):
+    bm = bmesh.new()
+    uv_layer = bm.loops.layers.uv.new("UVMap")
+    half = width * 0.5
+    front = [(-half, 0.0, 0.0), (half, 0.0, 0.0), (half, 0.0, height), (-half, 0.0, height)]
+    front_uv = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+    verts = [bm.verts.new(co) for co in front]
+    face = bm.faces.new(verts)
+    for loop, coord in zip(face.loops, front_uv):
+        loop[uv_layer].uv = coord
+    back = [(-half, -0.008, 0.0), (-half, -0.008, height), (half, -0.008, height), (half, -0.008, 0.0)]
+    back_uv = [(1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.0, 0.0)]
+    back_verts = [bm.verts.new(co) for co in back]
+    back_face = bm.faces.new(back_verts)
+    for loop, coord in zip(back_face.loops, back_uv):
+        loop[uv_layer].uv = coord
+    mesh = bpy.data.meshes.new(name)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.materials.append(material)
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    return obj
+
+
+def build_weapon_rack():
+    if KIT_DEFS.get("weapon_rack", {}).get("root"):
+        return KIT_DEFS["weapon_rack"]["root"]
+    wood = _weapon_wood_mat()
+    brass = mat("WeaponRackBrass", (0.66, 0.46, 0.18), 0.34, 1.0)
+    parts = []
+
+    def box(name, center, size, material):
+        obj = _rack_box(name, center, size, material)
+        parts.append(obj)
+        return obj
+
+    for side in (-1, 1):
+        box("RackPost_%d" % side, (side * 0.98, 0.0, 0.88), (0.10, 0.12, 1.76), wood)
+        box("RackFoot_%d" % side, (side * 0.98, 0.05, 0.04), (0.28, 0.40, 0.08), wood)
+        box("RackCap_%d" % side, (side * 0.98, 0.0, 1.79), (0.15, 0.17, 0.05), brass)
+        box("RackBand_%d_a" % side, (side * 0.98, 0.0, 0.58), (0.12, 0.14, 0.03), brass)
+        box("RackBand_%d_b" % side, (side * 0.98, 0.0, 1.32), (0.12, 0.14, 0.03), brass)
+    box("RackTop", (0.0, 0.0, 1.66), (2.16, 0.10, 0.07), wood)
+    box("RackSwordRail", (0.0, 0.08, 1.52), (1.88, 0.05, 0.04), wood)
+    box("RackSpearRail", (0.0, 0.09, 0.40), (1.96, 0.12, 0.06), wood)
+    box("RackStretcher", (0.0, -0.02, 0.16), (1.88, 0.06, 0.045), wood)
+    for index, x in enumerate((-0.64, -0.32, 0.0, 0.32, 0.64)):
+        box("RackSlat_%d" % index, (x, -0.075, 1.00), (0.04, 0.022, 1.08), wood)
+    jian_h = 1.05
+    spear_h = 1.95
+    dao_h = 1.90
+    jian = _weapon_decal_mat("weapon_jian.png")
+    spear_mat = _weapon_decal_mat("weapon_spear.png")
+    dao_mat = _weapon_decal_mat("weapon_guandao.png")
+    for index, (x, yaw) in enumerate(((-0.46, 0.04), (0.0, -0.02), (0.46, 0.05))):
+        card = _weapon_card("Jian_%d" % index, jian, jian_h * 0.174, jian_h)
+        card.location = (x, 0.30, 0.50)
+        card.rotation_euler = (0.0, 0.0, yaw)
+        parts.append(card)
+    for index, (x, yaw) in enumerate(((-0.82, 0.03), (0.82, -0.03))):
+        card = _weapon_card("Spear_%d" % index, spear_mat, spear_h * 0.198, spear_h)
+        card.location = (x, 0.08, 0.0)
+        card.rotation_euler = (0.0, 0.0, yaw)
+        parts.append(card)
+    dao = _weapon_card("Guandao", dao_mat, dao_h * 0.148, dao_h)
+    dao.location = (-1.22, 0.14, 0.0)
+    dao.rotation_euler = (0.0, 0.0, -0.05)
+    parts.append(dao)
+    bpy.context.view_layer.update()
+    root = bpy.data.objects.new("weapon_rack", None)
+    bpy.context.scene.collection.objects.link(root)
+    for part in parts:
+        world = part.matrix_world.copy()
+        part.parent = root
+        part.matrix_world = world
+    bpy.context.view_layer.update()
+    register_kit(
+        "weapon_rack",
+        "兵器架，深色木架上挂三把剑、两侧立枪并靠一把关刀，原点在地面中心",
+        "base",
+    )
+    KIT_DEFS["weapon_rack"]["root"] = root
+    return root
+
+
+def _render_weapon_rack_preview():
+    bpy.ops.object.light_add(type="SUN", location=(1.5, -2.5, 4.0))
+    sun = bpy.context.object
+    sun.data.energy = 3.4
+    sun.data.color = (1.0, 0.94, 0.86)
+    sun.rotation_euler = (math.radians(50), math.radians(8), math.radians(20))
+    bpy.ops.object.light_add(type="AREA", location=(-1.6, 1.8, 2.2))
+    fill = bpy.context.object
+    fill.data.energy = 250
+    fill.data.size = 2.5
+    bpy.ops.object.camera_add(location=(0.35, 4.6, 1.45))
+    camera = bpy.context.object
+    look = Vector((0.1, 0.0, 0.95)) - camera.location
+    camera.rotation_euler = look.to_track_quat("-Z", "Y").to_euler()
+    bpy.context.scene.camera = camera
+    scene = bpy.context.scene
+    for engine in ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"):
+        try:
+            scene.render.engine = engine
+            break
+        except TypeError:
+            continue
+    scene.render.resolution_x = 1280
+    scene.render.resolution_y = 720
+    scene.render.image_settings.file_format = "PNG"
+    scene.render.filepath = os.path.join(SOURCE_DIR, "weapon_rack_preview.png")
+    scene.world.color = (0.16, 0.17, 0.18)
+    bpy.ops.render.render(write_still=True)
+
+
 if "--paving-only" in sys.argv:
     build_paving_kits()
     export_kits()
@@ -1461,6 +1654,18 @@ if "--paving-only" in sys.argv:
     except Exception as exc:
         print("PAVING_PREVIEW_FAILED %s" % exc)
     print("PAVING_KITS_BUILT %s" % ", ".join(KIT_DEFS))
+    raise SystemExit(0)
+
+
+if "--weapon-rack-only" in sys.argv:
+    build_weapon_rack()
+    try:
+        _render_weapon_rack_preview()
+    except Exception as exc:
+        print("WEAPON_RACK_PREVIEW_FAILED %s" % exc)
+    export_kits()
+    _merge_paving_catalog()
+    print("WEAPON_RACK_BUILT")
     raise SystemExit(0)
 
 
@@ -1574,6 +1779,8 @@ for obj in list(INSTANCES):
         if node.name in bpy.data.objects:
             bpy.data.objects.remove(node, do_unlink=True)
 build_paving_kits()
+build_weapon_rack()
+stash_master(KIT_DEFS["weapon_rack"]["root"])
 export_kits()
 bpy.ops.export_scene.gltf(filepath=SHELL_GLB_PATH, export_format="GLB", export_apply=True, export_cameras=False, export_lights=False)
 bpy.ops.wm.obj_export(filepath=SHELL_OBJ_PATH, export_materials=True, export_uv=False, export_normals=True, export_triangulated_mesh=True)
@@ -1589,9 +1796,25 @@ catalog = {
 with open(CATALOG_PATH, "w", encoding="utf-8", newline="\n") as handle:
     json.dump(catalog, handle, ensure_ascii=False, indent=2)
     handle.write("\n")
-with open(PLACEMENTS_PATH, "w", encoding="utf-8", newline="\n") as handle:
-    json.dump({"placements": placements}, handle, ensure_ascii=False)
-    handle.write("\n")
+def _placements_are_authored():
+    # The map builder owns this file after the first save.
+    if not os.path.exists(PLACEMENTS_PATH):
+        return False
+    try:
+        with open(PLACEMENTS_PATH, encoding="utf-8") as handle:
+            document = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(document.get("authored"))
+
+
+authored_placements = _placements_are_authored()
+if authored_placements:
+    print("PLACEMENTS_KEPT map editor owns kit_placements.json")
+else:
+    with open(PLACEMENTS_PATH, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump({"placements": placements}, handle, ensure_ascii=False)
+        handle.write("\n")
 for stale in (
     os.path.join(OUT_DIR, "mountain_arena.obj"),
     os.path.join(OUT_DIR, "mountain_arena.mtl"),
@@ -1624,6 +1847,9 @@ def _keep_rock_rear():
     with open(CATALOG_PATH, "w", encoding="utf-8", newline="\n") as handle:
         json.dump(catalog_doc, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
+    if authored_placements:
+        print("ROCK_REAR_CATALOG_ONLY kits=%d" % len(extra))
+        return
     with open(PLACEMENTS_PATH, encoding="utf-8") as handle:
         placed = json.load(handle)
     placed["placements"] = [item for item in placed["placements"] if item.get("kit") not in ids] + rear

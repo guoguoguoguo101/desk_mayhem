@@ -19,6 +19,7 @@ const WEAPON_NAMES: Array[String] = ["雨伞", "咖啡杯", "锅", "办公椅"]
 const CD_PUNCH := 0.4
 const CD_KICK := BattleRules.CD_KICK
 const CD_DASH := BattleRules.CD_DASH
+const CD_BLINK := BattleRules.CD_BLINK
 const CD_BLOCK := 4.0
 const CD_SPIN := BattleRules.CD_SPIN
 const SPIN_DURATION := BattleRules.SPIN_DURATION
@@ -202,6 +203,7 @@ func _ready() -> void:
 	for part_name in ["Body", "Head", "Muzzle", "Nose", "EarL", "EyeL", "ArmL", "FootL", "EarR", "EyeR", "ArmR", "FootR", "Collar", "Badge", "Tail"]:
 		visual.get_node(part_name).visible = false
 	visual.add_child(FOX_VISUAL.instantiate())
+	preload("res://mountain_arena.gd").mark_character_rim(visual)
 	if net_puppet:
 		return
 	aim_marker = MeshInstance3D.new()
@@ -320,6 +322,12 @@ func _process(delta: float) -> void:
 			if spin_ghost_time<=0:
 				spin_ghost_time = 0.05
 				feedback.spin_ghost(global_position+Vector3.UP*0.35,visual.rotation.y)
+		if dash_time > 0.0:
+			dash_trail_time -= delta
+			if dash_trail_time <= 0.0:
+				feedback.dash_trail(global_position + Vector3.UP * 0.15)
+				feedback.body_ghost(visual, Color(1.0, 0.62, 0.28, 0.38))
+				dash_trail_time = 0.05
 		apply_body_pose(delta)
 		update_visuals()
 		return
@@ -469,6 +477,13 @@ func update_visuals() -> void:
 	chair_visual.position = Vector3(0, -0.62, 0.05) if mounted else chair_rest_position
 	chair_visual.rotation = Vector3.ZERO
 	var moving := Vector2(velocity.x, velocity.z).length()
+	if feedback and dash_time <= 0.0 and not downed:
+		feedback.present_wind(self, velocity)
+		if punch_time > 0.0:
+			var punch_style := fox_attack_id if str(fox_attack_id).begins_with("punch") else "punch_light"
+			feedback.sample_limb(self, "DEF-hand.R", punch_style)
+		elif kick_time > 0.0:
+			feedback.sample_limb(self, "DEF-foot.R", "kick_front")
 	var stride := sin(walk_phase) if moving > 0.6 and kick_time <= 0.0 and action_lock <= 0.0 else 0.0
 	body_mesh.position = body_rest + Vector3(0, absf(stride) * 0.035, 0)
 	foot_l.position = foot_l_rest + Vector3(0, maxf(0.0, stride) * 0.12, stride * 0.08)
@@ -695,18 +710,19 @@ func punch() -> void:
 	cd["punch"] = 0.45 if step >= 2 else 0.28
 	action_lock = 0.22 if step >= 2 else 0.16
 	punch_time = 0.2 if step >= 2 else 0.14
-	var forward := facing_direction()
-	feedback.play_swing()
-	await get_tree().create_timer(0.08 if step >= 2 else 0.05).timeout
-	if not is_inside_tree() or downed:
-		return
 	var intent_id := "punch_light"
 	if step == 1:
 		intent_id = "punch_follow"
 	elif step >= 2:
 		intent_id = "punch_uppercut"
+	fox_attack_id = intent_id
+	var forward := facing_direction()
+	feedback.play_swing()
+	await get_tree().create_timer(0.08 if step >= 2 else 0.05).timeout
+	if not is_inside_tree() or downed:
+		return
 	var hits := strike_targets(intent_id, forward)
-	feedback.attack_arc(global_position + Vector3.UP * 0.35, forward, 1.05, Color("ffe1a4"), step >= 2)
+	feedback.play_melee(self, intent_id, forward)
 	if hits > 0 and step < 2:
 		punch_chain = PUNCH_LINK
 		punch_index = step
@@ -723,13 +739,14 @@ func air_punch() -> void:
 	cd["punch"] = 0.28
 	action_lock = 0.16
 	punch_time = 0.14
+	fox_attack_id = "punch_air"
 	var forward := facing_direction()
 	feedback.play_swing()
 	await get_tree().create_timer(0.05).timeout
 	if not is_inside_tree() or downed:
 		return
 	strike_targets("punch_air", forward)
-	feedback.attack_arc(global_position + Vector3.UP * 0.5, forward, 1.1, Color("ffe1a4"))
+	feedback.play_melee(self, "punch_air", forward)
 
 func kick() -> void:
 	if not can_chain() or float(cd["kick"]) > 0.0:
@@ -740,11 +757,11 @@ func kick() -> void:
 	kick_time = 0.3
 	var forward := facing_direction()
 	feedback.play_swing()
+	feedback.play_kick(self, forward)
 	await get_tree().create_timer(0.08).timeout
 	if not is_inside_tree() or downed:
 		return
 	strike_targets("kick_front", forward)
-	feedback.attack_arc(global_position, forward, 1.4, Color("f5be86"))
 
 func umbrella_action() -> void:
 	if downed or knockdown or mounted:
@@ -792,7 +809,7 @@ func umbrella_uppercut() -> void:
 	if not is_inside_tree() or downed:
 		return
 	strike_targets("umbrella_uppercut", forward)
-	feedback.attack_arc(global_position + Vector3.UP * 0.4, forward, 1.7, Color("85e2dd"), true)
+	feedback.attack_arc(global_position + Vector3.UP * 0.9, forward, 1.7, Color("85e2dd"), true)
 
 func start_block() -> void:
 	if not can_act() or float(cd["block"]) > 0.0:
@@ -817,6 +834,7 @@ func umbrella_spin() -> void:
 	velocity.z = 0.0
 	feedback.play_swing()
 	feedback.spin_burst(global_position + Vector3.UP * 0.2, false)
+	feedback.play_spin_fox(self, Vector3(-sin(spin_facing), 0.0, -cos(spin_facing)))
 
 func resolve_umbrella_spin() -> void:
 	feedback.spin_burst(global_position + Vector3.UP * 0.25, true)
@@ -1385,7 +1403,10 @@ func foe_juggled(reach: float, height_limit: float) -> bool:
 	return false
 
 func short_blink() -> void:
-	if downed or knockdown or mounted or dash_time > 0.0 or action_lock > 0.0 or block_time > 0.0 or blink_cooldown > 0.0:
+	if downed or mounted or blink_cooldown > 0.0:
+		return
+	var escaping := stagger_time > 0.0 or juggled or kick_bounce or knockdown
+	if not escaping and (dash_time > 0.0 or action_lock > 0.0 or block_time > 0.0):
 		return
 	drop_from_head()
 	drop_rider()
@@ -1398,10 +1419,22 @@ func short_blink() -> void:
 			break
 	if global_position.distance_to(start_position) < 0.1:
 		return
-	velocity.x = 0.0
-	velocity.z = 0.0
-	blink_cooldown = 1.8
+	if escaping:
+		stagger_time = 0.0
+		flinch_time = 0.0
+		juggled = false
+		kick_bounce = false
+		bounce_pending = false
+		knockdown = false
+		knockdown_time = 0.0
+		airborne = false
+		victim_float = 0.0
+		action_lock = 0.0
+		FloatRules.end_session(self)
+	velocity = Vector3.ZERO
+	blink_cooldown = CD_BLINK
 	feedback.blink_effect(start_position + Vector3.UP, global_position + Vector3.UP)
+	feedback.body_ghost(visual, Color(0.55, 0.92, 1.0, 0.5))
 
 func jump() -> void:
 	if downed or knockdown or mounted or dash_time > 0.0 or action_lock > 0.0 or juggled or kick_bounce:
@@ -1469,7 +1502,7 @@ func take_hit(attack_name: String = "文件夹") -> void:
 	flinch_time = 0.2
 	flinch_side = 1.0 if randf() > 0.5 else -1.0
 	var heavy := attack_name in ["雨伞挑飞", "扣锅", "空中扣锅", "踢飞", "上勾拳"]
-	feedback.impact(global_position + Vector3.UP * 0.9, heavy, 0, "-%d" % damage)
+	feedback.impact(global_position + Vector3.UP * 0.9, heavy, 0, "-%d" % damage, result.resulting_velocity)
 	stagger_time = maxf(stagger_time, 0.28 if attack_name == "踢飞" else HITSTUN)
 	if health <= 0:
 		health = 0
@@ -2105,8 +2138,9 @@ func _physics_process(delta: float) -> void:
 		dash_time -= delta
 		dash_trail_time -= delta
 		if dash_trail_time <= 0.0:
-			feedback.dash_trail(global_position + Vector3.UP * 0.1)
-			dash_trail_time = 0.06
+			feedback.dash_trail(global_position + Vector3.UP * 0.15)
+			feedback.body_ghost(visual, Color(1.0, 0.62, 0.28, 0.38))
+			dash_trail_time = 0.05
 		target_velocity = dash_direction * 15.0
 	var response := 28.0
 	if is_on_floor() and not was_dashing:
@@ -2203,7 +2237,8 @@ func skill_slots() -> Array:
 	var kick_slot := pack_slot("右键", "前踢", float(cd["kick"]), CD_KICK, foe_juggled(2.6, 3.5))
 	var primary: Array = weapon_skill_pair(loadout[0], "Q", "E")
 	var secondary: Array = weapon_skill_pair(loadout[1], "F", "C")
-	return [punch_slot, kick_slot, primary[0], primary[1], secondary[0], secondary[1]]
+	var blink_slot := pack_slot("Shift", "闪现", blink_cooldown, CD_BLINK)
+	return [punch_slot, kick_slot, primary[0], primary[1], secondary[0], secondary[1], blink_slot]
 
 func weapon_skill_pair(chosen: int, key_one: String, key_two: String) -> Array:
 	match chosen:

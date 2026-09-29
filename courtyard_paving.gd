@@ -2,6 +2,8 @@ extends Node3D
 ## Pave only InnerCourt (74 x 56 m). Preserve the complete existing arena insert.
 const KIT_DIR := "res://assets/environment/kits/"
 const FLOOR_Y := 0.045
+# GLB 里的高光是 0.32。Compatibility 渲染下太阳会在大片平地打出白斑，铺进场里时压低。
+const PAVER_SPECULAR := 0.08
 var placements: Dictionary = {}
 
 func _ready() -> void:
@@ -61,7 +63,7 @@ func _batch_meshes(node: Node, parent_transform: Transform3D, instances: Array, 
 		# Keep the imported mesh/material/UVs; batch thousands of bricks in four groups.
 		var batch := MultiMesh.new()
 		batch.transform_format = MultiMesh.TRANSFORM_3D
-		batch.mesh = node.mesh
+		batch.mesh = _dull_paver_mesh(node.mesh)
 		batch.instance_count = instances.size()
 		for index in instances.size():
 			batch.set_instance_transform(index, instances[index] * local)
@@ -72,3 +74,13 @@ func _batch_meshes(node: Node, parent_transform: Transform3D, instances: Array, 
 		add_child(visual)
 	for child in node.get_children():
 		_batch_meshes(child, local, instances, kit)
+
+func _dull_paver_mesh(mesh: Mesh) -> Mesh:
+	var copy := mesh.duplicate() as Mesh
+	for surface in copy.get_surface_count():
+		var source: Material = copy.surface_get_material(surface)
+		if source is StandardMaterial3D:
+			var stone := (source as StandardMaterial3D).duplicate() as StandardMaterial3D
+			stone.metallic_specular = PAVER_SPECULAR
+			copy.surface_set_material(surface, stone)
+	return copy

@@ -6,8 +6,67 @@ const PLACEMENTS_PATH := "res://assets/environment/mountain_arena/kit_placements
 const KIT_DIR := "res://assets/environment/kits/"
 const ARENA_FLOOR_DIR := "res://assets/environment/arena_floor/"
 const ARENA_FLOOR_Y := 0.045
+const PAVER_SPECULAR := 0.08
+# 进演武场后按 F7 轮换。数值是太阳、环境光和背景色，不改战斗。
+# 第 2 渲染层只给人物轮廓光，场景网格不在这一层。
+const CHARACTER_RIM_LAYER := 2
+const DAY_TIMES: Array[Dictionary] = [
+	{
+		"name": "白天",
+		"sun_rotation": Vector3(-58, -24, 0),
+		"sun_color": Color(1.0, 0.97, 0.9),
+		"sun_energy": 0.7,
+		"ambient_color": Color(0.84, 0.9, 0.96),
+		"ambient_energy": 0.26,
+		"background": Color(0.64, 0.78, 0.9),
+	},
+	{
+		"name": "下午",
+		"sun_rotation": Vector3(-34, -52, 0),
+		"sun_color": Color(1.0, 0.86, 0.68),
+		"sun_energy": 0.62,
+		"ambient_color": Color(1.0, 0.9, 0.76),
+		"ambient_energy": 0.22,
+		"background": Color(0.55, 0.68, 0.82),
+	},
+	{
+		"name": "傍晚",
+		"sun_rotation": Vector3(-12, -78, 0),
+		"sun_color": Color(1.0, 0.46, 0.2),
+		"sun_energy": 0.36,
+		"ambient_color": Color(0.72, 0.4, 0.3),
+		"ambient_energy": 0.16,
+		"background": Color(0.4, 0.26, 0.3),
+	},
+	{
+		"name": "夜晚",
+		"sun_rotation": Vector3(-68, 150, 0),
+		"sun_color": Color(0.62, 0.72, 1.0),
+		"sun_energy": 0.18,
+		"ambient_color": Color(0.2, 0.26, 0.4),
+		"ambient_energy": 0.26,
+		"background": Color(0.04, 0.06, 0.12),
+	},
+]
 
 var built := false
+var day_index := 3
+var light_captured := false
+var saved_sun_rotation := Vector3(-48, -35, 0)
+var saved_sun_color := Color(1, 0.94, 0.85)
+var saved_sun_energy := 0.55
+var saved_ambient_color := Color(0.77, 0.85, 0.9)
+var saved_ambient_energy := 0.22
+var saved_background := Color(0.57, 0.7, 0.75)
+var saved_background_mode := Environment.BG_COLOR
+const NIGHT_SKY_SHADER := "res://assets/environment/sky/night_sky.gdshader"
+const MOON_TEXTURE := "res://assets/environment/sky/moon.png"
+var night_sky: Sky
+var night_lights: Node3D
+var character_rim: DirectionalLight3D
+var lantern_glow: Array[StandardMaterial3D] = []
+var lantern_glow_base: Array[float] = []
+var day_label: Label
 var floor_materials: Dictionary = {}
 var floor_albedo: Texture2D
 var floor_material_template: StandardMaterial3D
@@ -28,6 +87,7 @@ func build() -> void:
 		build_fallback_visual()
 	else:
 		place_kits()
+	_build_night_lights()
 	place_arena_floor()
 	var paving := preload("res://courtyard_paving.gd").new()
 	add_child(paving)
@@ -44,8 +104,10 @@ func show_arena() -> void:
 		old_hall.clear_dummies()
 	visible = true
 	set_solid(true)
+	_apply_day_time()
 
 func hide_arena() -> void:
+	_restore_day_time()
 	visible = false
 	set_solid(false)
 	var old_hall = get_parent().get_node_or_null("DuelHall")
@@ -73,9 +135,6 @@ func place_kits() -> void:
 	var cache := {}
 	for item in parsed.get("placements", []):
 		var kit_id := str(item.get("kit", ""))
-		# These four samples now form the courtyard paving; avoid duplicate surfaces.
-		if kit_id in ["paving_square", "paving_square_crack", "paving_rect", "paving_corner"]:
-			continue
 		var packed: PackedScene = cached_kit(cache, kit_id)
 		if packed == null:
 			continue
@@ -88,6 +147,85 @@ func place_kits() -> void:
 		node.quaternion = Quaternion(float(rotation[0]), float(rotation[1]), float(rotation[2]), float(rotation[3]))
 		node.scale = Vector3(float(scale[0]), float(scale[1]), float(scale[2]))
 		add_child(node)
+
+static func mark_character_rim(root: Node) -> void:
+	if root is GeometryInstance3D:
+		(root as GeometryInstance3D).layers |= CHARACTER_RIM_LAYER
+	for child in root.get_children():
+		mark_character_rim(child)
+
+func _build_night_lights() -> void:
+	night_lights = Node3D.new()
+	night_lights.name = "NightLights"
+	night_lights.visible = false
+	add_child(night_lights)
+	character_rim = DirectionalLight3D.new()
+	character_rim.name = "CharacterRim"
+	character_rim.rotation_degrees = Vector3(-22, -40, 0)
+	character_rim.light_color = Color(0.78, 0.86, 1.0)
+	character_rim.light_energy = 0.55
+	character_rim.shadow_enabled = false
+	character_rim.light_cull_mask = CHARACTER_RIM_LAYER
+	night_lights.add_child(character_rim)
+	# 兼容渲染每个网格大约只吃进 8 盏点光。灯按灯群各放一盏，不给每只石灯各挂一盏。
+	for pool in [
+		[Vector3(-4.8, 3.35, -29.6), 1.25, 12.0],
+		[Vector3(4.8, 3.35, -29.6), 1.25, 12.0],
+		[Vector3(-34.5, 1.4, -24.0), 1.05, 12.0],
+		[Vector3(-31.0, 1.4, -27.0), 1.05, 10.0],
+		[Vector3(34.5, 1.4, -24.0), 1.05, 12.0],
+		[Vector3(31.0, 1.4, -27.0), 1.05, 10.0],
+		[Vector3(-29.0, 1.4, 18.0), 1.05, 9.0],
+		[Vector3(30.0, 1.4, 24.0), 1.05, 14.0],
+	]:
+		var light := OmniLight3D.new()
+		light.position = pool[0]
+		light.light_energy = pool[1]
+		light.omni_range = pool[2]
+		light.light_color = Color(1.0, 0.72, 0.38)
+		light.shadow_enabled = false
+		night_lights.add_child(light)
+	for child in get_children():
+		var kit_name := String(child.name)
+		if kit_name == "palace_lantern" or kit_name == "stone_lantern":
+			_collect_lantern_glow(child)
+
+func _collect_lantern_glow(node: Node) -> void:
+	if node is MeshInstance3D:
+		var mesh := (node as MeshInstance3D).mesh
+		if mesh != null:
+			for surface in mesh.get_surface_count():
+				var material := mesh.surface_get_material(surface)
+				if material is StandardMaterial3D and (material as StandardMaterial3D).emission_enabled:
+					var glow := material as StandardMaterial3D
+					if not lantern_glow.has(glow):
+						lantern_glow.append(glow)
+						lantern_glow_base.append(glow.emission_energy_multiplier)
+	for child in node.get_children():
+		_collect_lantern_glow(child)
+
+func _set_night_lights(enabled: bool) -> void:
+	if night_lights:
+		night_lights.visible = enabled
+	for index in lantern_glow.size():
+		lantern_glow[index].emission_energy_multiplier = lantern_glow_base[index] * (1.4 if enabled else 1.0)
+
+func _set_night_sky(environment: Environment, enabled: bool) -> void:
+	if not enabled:
+		environment.sky = null
+		environment.background_mode = saved_background_mode
+		return
+	if night_sky == null:
+		var shader := load(NIGHT_SKY_SHADER) as Shader
+		var material := ShaderMaterial.new()
+		material.shader = shader
+		material.set_shader_parameter("moon_tex", load(MOON_TEXTURE))
+		night_sky = Sky.new()
+		night_sky.sky_material = material
+	var moon_dir := Vector3(0.0, 0.38, 0.925)
+	(night_sky.sky_material as ShaderMaterial).set_shader_parameter("moon_dir", moon_dir.normalized())
+	environment.background_mode = Environment.BG_SKY
+	environment.sky = night_sky
 
 func place_arena_floor() -> void:
 	# Stable appearance across clients and scene reloads.
@@ -198,13 +336,14 @@ func _sample_paving_material() -> StandardMaterial3D:
 				var source: Material = mesh_node.mesh.surface_get_material(surface)
 				if source is StandardMaterial3D and source.resource_name == "paving_square":
 					var result := source.duplicate() as StandardMaterial3D
+					result.metallic_specular = PAVER_SPECULAR
 					sample.free()
 					return result
 		sample.free()
 	push_warning("Sample paving material unavailable; using neutral stone fallback.")
 	var fallback := StandardMaterial3D.new()
 	fallback.roughness = 0.84
-	fallback.metallic_specular = 0.32
+	fallback.metallic_specular = PAVER_SPECULAR
 	fallback.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return fallback
 
@@ -245,6 +384,98 @@ func add_layout_collider(entry: Dictionary) -> void:
 		shape_node.shape = box
 	body.add_child(shape_node)
 	add_child(body)
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not visible or not event is InputEventKey:
+		return
+	var key := event as InputEventKey
+	if not key.pressed or key.echo or key.physical_keycode != KEY_F7:
+		return
+	day_index = (day_index + 1) % DAY_TIMES.size()
+	_apply_day_time()
+	get_viewport().set_input_as_handled()
+
+func _apply_day_time() -> void:
+	var sun := _sun()
+	var world := _world()
+	if sun == null or world == null or world.environment == null:
+		return
+	if not light_captured:
+		saved_sun_rotation = sun.rotation_degrees
+		saved_sun_color = sun.light_color
+		saved_sun_energy = sun.light_energy
+		saved_ambient_color = world.environment.ambient_light_color
+		saved_ambient_energy = world.environment.ambient_light_energy
+		saved_background = world.environment.background_color
+		saved_background_mode = world.environment.background_mode
+		light_captured = true
+	var preset: Dictionary = DAY_TIMES[day_index]
+	sun.rotation_degrees = preset.sun_rotation
+	sun.light_color = preset.sun_color
+	sun.light_energy = preset.sun_energy
+	world.environment.ambient_light_color = preset.ambient_color
+	world.environment.ambient_light_energy = preset.ambient_energy
+	world.environment.background_color = preset.background
+	var night := str(preset.name) == "夜晚"
+	_set_night_lights(night)
+	_set_night_sky(world.environment, night)
+	_show_day_label(preset)
+	print("演武场灯光 %s 太阳能量 %.2f 颜色 %s 俯仰 %.0f 环境能量 %.2f" % [
+		preset.name, preset.sun_energy, preset.sun_color, preset.sun_rotation.x, preset.ambient_energy
+	])
+
+func _restore_day_time() -> void:
+	if not light_captured:
+		return
+	var sun := _sun()
+	var world := _world()
+	if sun:
+		sun.rotation_degrees = saved_sun_rotation
+		sun.light_color = saved_sun_color
+		sun.light_energy = saved_sun_energy
+	if world and world.environment:
+		world.environment.ambient_light_color = saved_ambient_color
+		world.environment.ambient_light_energy = saved_ambient_energy
+		world.environment.background_color = saved_background
+		world.environment.background_mode = saved_background_mode
+		world.environment.sky = null
+	_set_night_lights(false)
+	light_captured = false
+	if day_label:
+		day_label.visible = false
+
+func _show_day_label(preset: Dictionary) -> void:
+	if day_label == null:
+		var layer := CanvasLayer.new()
+		layer.layer = 30
+		add_child(layer)
+		day_label = Label.new()
+		day_label.position = Vector2(24, 24)
+		day_label.add_theme_font_size_override("font_size", 18)
+		day_label.add_theme_color_override("font_color", Color(1, 0.95, 0.86))
+		layer.add_child(day_label)
+	var rotation: Vector3 = preset.sun_rotation
+	day_label.text = "%s  F7切换\n太阳能量 %.2f  颜色 %s  俯仰 %.0f°\n环境能量 %.2f  颜色 %s" % [
+		preset.name,
+		preset.sun_energy,
+		preset.sun_color,
+		rotation.x,
+		preset.ambient_energy,
+		preset.ambient_color,
+	]
+	day_label.visible = true
+
+func _sun() -> DirectionalLight3D:
+	var root := get_parent()
+	if root == null:
+		return null
+	return root.get_node_or_null("Sun") as DirectionalLight3D
+
+func _world() -> WorldEnvironment:
+	var root := get_parent()
+	if root == null:
+		return null
+	return root.get_node_or_null("Environment") as WorldEnvironment
 
 func set_solid(enabled: bool) -> void:
 	for node in find_children("*", "StaticBody3D", true, false):

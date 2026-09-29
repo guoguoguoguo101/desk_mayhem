@@ -357,18 +357,27 @@ func _present_events(events: Array, authoritative: bool) -> void:
 				var body := _body(str(event.get("victim_id","")))
 				if body==null: continue
 				body.flinch_time = 0.15
-				manager.feedback.impact(body.global_position+Vector3.UP,true)
+				var attack_name := str(event.get("attack",""))
+				var heavy := attack_name in ["punch_uppercut", "kick_front", "umbrella_uppercut", "umbrella_spin", "pot_slam", "pot_slam_air"]
+				var damage := int(event.get("damage", 0))
+				manager.feedback.impact(body.global_position + Vector3.UP * 0.9, heavy, 2 if heavy else 0, "-%d" % damage if damage > 0 else "", vector(event.get("velocity", [])))
 				if str(event.get("attacker_id",""))==entity_id:
 					manager.local_player.combo_count += 1
 					manager.local_player.combo_timer = 1.2
 			"blink":
 				blink_events += 1
+				var blink_slot := int(event.get("slot", -1))
+				var blinker: Node = manager.local_player if blink_slot == slot else manager.puppet_for(blink_slot + 1)
 				manager.feedback.blink_effect(vector(event.get("from",[]))+Vector3.UP,vector(event.get("to",[]))+Vector3.UP)
+				if blinker and blinker.get("visual"):
+					manager.feedback.body_ghost(blinker.visual, Color(0.55, 0.92, 1.0, 0.5))
 			"action_start":
+				var index := int(event.get("slot",-1))
+				var actor: Node = manager.local_player if index==slot else manager.puppet_for(index+1)
 				if str(event.get("attack",""))=="returning_pot":
-					var index := int(event.get("slot",-1))
-					var body: Node = manager.local_player if index==slot else manager.puppet_for(index+1)
-					if body: _play_action(body,"returning_pot")
+					if actor: _play_action(actor,"returning_pot")
+				elif actor:
+					_present_action_fx(actor, event)
 			"round_end":
 				manager.local_player.banner = "本回合平局" if bool(event.get("draw",false)) else "本回合结束：玩家%d 获胜" % (int(event.get("winner_slot",-1))+1)
 				manager.local_player.banner_time = 2.5
@@ -445,6 +454,30 @@ func _present_facing(body: Node, direction: Vector3, delta: float) -> void:
 		return
 	var yaw := atan2(-direction.x,-direction.z)
 	body.visual.rotation.y = lerp_angle(body.visual.rotation.y,yaw,clampf(12.0*delta,0,1))
+
+func _present_action_fx(body: Node, event: Dictionary) -> void:
+	var attack := str(event.get("attack", ""))
+	var facing := vector(event.get("facing", []))
+	var delay := maxf(0.0, float(int(event.get("hit_tick", 0)) - int(event.get("tick", 0))) / 60.0)
+	if attack == "umbrella_spin":
+		manager.feedback.spin_burst(body.global_position + Vector3.UP * 0.2, false)
+		manager.feedback.play_spin_fox(body, facing)
+	if attack == "dash":
+		return
+	if attack == "kick_front":
+		manager.feedback.play_swing()
+		manager.feedback.play_kick(body, facing)
+		return
+	manager.feedback.play_swing()
+	var feedback: Node = manager.feedback
+	var play := func() -> void:
+		if not is_instance_valid(body) or not is_instance_valid(feedback):
+			return
+		feedback.present_attack(attack, body.global_position, facing, body)
+	if delay <= 0.02:
+		play.call()
+	else:
+		get_tree().create_timer(delay).timeout.connect(play)
 
 func _play_action(body: Node, attack: String, direction := Vector3.ZERO, aerial := false) -> void:
 	if attack == "returning_pot":

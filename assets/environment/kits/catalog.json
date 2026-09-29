@@ -428,6 +428,12 @@
       "file": "bamboo_platform_01.glb",
       "origin": "base",
       "description": "岩台和竹丛，原点在地面"
+    },
+    {
+      "id": "weapon_rack",
+      "file": "weapon_rack.glb",
+      "origin": "base",
+      "description": "兵器架，深色木架上挂三把剑、两侧立枪并靠一把关刀，原点在地面中心"
     }
   ]
 }

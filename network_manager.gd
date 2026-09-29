@@ -257,9 +257,9 @@ func build_lobby() -> void:
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER)
 	panel.offset_left = -280
-	panel.offset_top = -285
+	panel.offset_top = -318
 	panel.offset_right = 280
-	panel.offset_bottom = 285
+	panel.offset_bottom = 318
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.add_theme_stylebox_override("panel", wood_panel_style())
 	lobby.add_child(panel)
@@ -306,6 +306,11 @@ func build_lobby() -> void:
 	dedicated_join_2.pressed.connect(start_battle_client_2)
 	style_button(dedicated_join_2, Color("477362"))
 	box.add_child(dedicated_join_2)
+	var map_editor := Button.new()
+	map_editor.text = "地图编辑"
+	map_editor.pressed.connect(start_map_editor)
+	style_button(map_editor, Color("8a6a3b"))
+	box.add_child(map_editor)
 	lobby_status = body_label("")
 	box.add_child(lobby_status)
 	refresh_lobby_status("同一 Wi-Fi 或网线。连不上时，允许游戏通过 Windows 防火墙，端口 %d。" % PORT)
@@ -461,6 +466,10 @@ func start_battle_client() -> void:
 
 func start_battle_client_2() -> void:
 	start_battle_client_at(ArenaCatalog.MOUNTAIN_COURTYARD, BATTLE_SERVER_2_PORT)
+
+func start_map_editor() -> void:
+	close_peer()
+	get_tree().change_scene_to_file("res://tools/map_builder/map_builder.tscn")
 
 func start_battle_client_at(requested_map: String, port: int) -> void:
 	if phase == "joining":
