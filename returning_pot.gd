@@ -6,6 +6,7 @@ const RETURN_SPEED := 16.0
 const RECALL_SPEED := 22.0
 const FLARE = preload("res://assets/kenney_particles/flare_01.png")
 const HitIntentData = preload("res://combat/hit_intent.gd")
+const PotTrailVFX = preload("res://vfx/returning_pot_trail.gd")
 var thrower: Node3D
 var direction := Vector3.FORWARD
 var returning := false
@@ -16,8 +17,7 @@ var age := 0.0
 var hit_out := {}
 var hit_back := {}
 var rotor := Node3D.new()
-var ribbon := MeshInstance3D.new()
-var points: Array[Vector3] = []
+var trail_vfx
 var glow := StandardMaterial3D.new()
 
 func launch(body: Node3D, forward: Vector3) -> void:
@@ -48,9 +48,9 @@ func launch(body: Node3D, forward: Vector3) -> void:
 	halo.mesh = ring
 	halo.material_override = glow
 	rotor.add_child(halo)
-	get_parent().add_child(ribbon)
-	ribbon.material_override = glow
-	ribbon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	trail_vfx = PotTrailVFX.new()
+	get_parent().add_child(trail_vfx)
+	trail_vfx.start(global_position)
 	flash(global_position, 0.65)
 
 func part(mesh: Mesh, at: Vector3, color: Color) -> void:
@@ -116,7 +116,7 @@ func _physics_process(delta: float) -> void:
 		return
 	rotor.rotate_y(delta * (38.0 if recalled else 26.0))
 	rotor.rotation.z = sin(age * 14.0) * 0.12
-	update_trail()
+	update_trail(delta)
 
 func check_hits(from: Vector3, to: Vector3) -> void:
 	var struck: Dictionary = hit_back if returning else hit_out
@@ -169,23 +169,11 @@ func flash(at: Vector3, size: float) -> void:
 	tween.tween_property(sprite, "modulate:a", 0.0, 0.18)
 	tween.chain().tween_callback(sprite.queue_free)
 
-func update_trail() -> void:
-	points.push_front(global_position)
-	if points.size() > (16 if recalled else 11):
-		points.pop_back()
-	if points.size() < 2:
-		return
-	var mesh := ImmediateMesh.new()
-	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
-	for i in points.size():
-		var next := points[mini(i + 1, points.size() - 1)]
-		var tangent := (points[maxi(0, i - 1)] - next).normalized()
-		var side := tangent.cross(Vector3.UP).normalized() * 0.34 * (1.0 - float(i) / points.size())
-		mesh.surface_add_vertex(points[i] + side)
-		mesh.surface_add_vertex(points[i] - side)
-	mesh.surface_end()
-	ribbon.mesh = mesh
+func update_trail(delta: float) -> void:
+	if is_instance_valid(trail_vfx):
+		trail_vfx.update_pot(global_position, returning, recalled, delta)
+	glow.albedo_color = Color("65edff") if returning else Color("ffc65b")
 
 func _exit_tree() -> void:
-	if is_instance_valid(ribbon):
-		ribbon.queue_free()
+	if is_instance_valid(trail_vfx):
+		trail_vfx.finish()

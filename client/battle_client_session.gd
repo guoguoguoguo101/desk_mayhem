@@ -347,7 +347,7 @@ func _render(delta: float) -> void:
 		var visual = pot_visuals[id]
 		visual.global_position = visual.global_position.lerp(pot_targets[id],1.0-exp(-35.0*delta))
 		visual.rotor.rotate_y(delta*(38.0 if visual.recalled else 26.0))
-		visual.update_trail()
+		visual.update_trail(delta)
 
 func _begin_local_correction(display_position: Vector3, target: Vector3, preserve_continuity: bool) -> void:
 	var offset := display_position - target

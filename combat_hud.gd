@@ -14,6 +14,9 @@ var crosshair: Control
 var crosshair_parts: Array[ColorRect] = []
 var combo_label: Label
 var fps_label: Label
+var frame_peak_ms := 0.0
+var displayed_peak_ms := 0.0
+var frame_peak_window := 0.0
 var shown_combo := 0
 var combo_pop := 0.0
 
@@ -140,7 +143,7 @@ func build_fps() -> void:
 	add_child(overlay)
 	fps_label = Label.new()
 	fps_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	fps_label.offset_left = -180.0
+	fps_label.offset_left = -320.0
 	fps_label.offset_top = 10.0
 	fps_label.offset_right = -16.0
 	fps_label.offset_bottom = 38.0
@@ -217,15 +220,21 @@ func make_label(size: int, color: Color) -> Label:
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	frame_peak_ms = maxf(frame_peak_ms, delta * 1000.0)
+	frame_peak_window += delta
+	if frame_peak_window >= 1.0:
+		displayed_peak_ms = frame_peak_ms
+		frame_peak_ms = 0.0
+		frame_peak_window = 0.0
 	var fps := Engine.get_frames_per_second()
-	fps_label.text = "%d FPS" % fps
-	if fps >= 55:
-		fps_label.modulate = Color("b7f0c8")
-	elif fps >= 30:
+	fps_label.text = "%d FPS  ·  最慢 %.0f ms" % [fps, displayed_peak_ms]
+	if displayed_peak_ms >= 33.0 or fps < 30:
+		fps_label.modulate = Color("f08a7a")
+	elif displayed_peak_ms >= 22.0 or fps < 55:
 		fps_label.modulate = Color("f3c97d")
 	else:
-		fps_label.modulate = Color("f08a7a")
+		fps_label.modulate = Color("b7f0c8")
 	if player == null:
 		return
 	status_label.text = player.status_text()
@@ -236,7 +245,7 @@ func _process(_delta: float) -> void:
 		if count != shown_combo:
 			shown_combo = count
 			combo_pop = 0.14
-		combo_pop = maxf(0.0, combo_pop - _delta)
+		combo_pop = maxf(0.0, combo_pop - delta)
 		var pulse := 1.0 + combo_pop * 1.6
 		combo_label.scale = Vector2(pulse, pulse)
 		combo_label.modulate.a = clampf(player.combo_timer / 0.35, 0.0, 1.0)

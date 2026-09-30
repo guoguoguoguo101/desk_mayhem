@@ -29,6 +29,7 @@ var cut_cinematic_duration := 0.0
 var cut_cinematic_phase := ""
 var cut_blend_age := 0.0
 var cut_blend_from := Transform3D.IDENTITY
+var window_mode_before_fullscreen := DisplayServer.WINDOW_MODE_WINDOWED
 const CUT_ENTER_TIME := 0.12
 const CUT_EXIT_TIME := 0.2
 
@@ -70,6 +71,16 @@ func _input(event: InputEvent) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	var net := get_tree().get_first_node_in_group("network")
 	if net and net.has_method("has_menu_open") and net.has_menu_open():
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F10:
+		if Engine.is_embedded_in_editor():
+			return
+		if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
+			DisplayServer.window_set_mode(window_mode_before_fullscreen)
+		else:
+			window_mode_before_fullscreen = DisplayServer.window_get_mode()
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
+		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		alt_released_mouse = false

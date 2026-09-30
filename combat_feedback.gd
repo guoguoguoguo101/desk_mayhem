@@ -308,7 +308,62 @@ func _blink_afterimages(source: Node3D, start: Vector3, finish: Vector3) -> void
 	for fraction in marks:
 		var pose := source.global_transform
 		pose.origin = departure + travel * fraction
-		_spawn_body_ghost(source, pose, Color(0.42, 0.88, 1.0, 0.62), 0.35, false)
+		_spawn_body_ghost(source, pose, Color(0.42, 0.88, 1.0, 0.62), 0.78, false, 0.18)
+		_blink_shards(pose.origin + Vector3.UP * 1.1, travel)
+		if fraction == 0.2 or fraction == 0.8:
+			burst_ring(pose.origin + Vector3.UP * 0.08, 0.3, 1.65, Color(0.28, 0.86, 1.0, 0.8))
+
+func _blink_shards(at: Vector3, travel: Vector3) -> void:
+	var particles := GPUParticles3D.new()
+	particles.one_shot = true
+	particles.emitting = false
+	particles.amount = 8
+	particles.lifetime = 0.68
+	particles.explosiveness = 1.0
+	particles.visibility_aabb = AABB(Vector3(-3, -2, -3), Vector3(6, 5, 6))
+	particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var process := ParticleProcessMaterial.new()
+	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	process.emission_sphere_radius = 0.18
+	process.direction = (travel.normalized() * 0.55 + Vector3.UP).normalized()
+	process.spread = 75.0
+	process.initial_velocity_min = 1.2
+	process.initial_velocity_max = 2.8
+	process.gravity = Vector3(0, -2.2, 0)
+	process.damping_min = 0.8
+	process.damping_max = 1.5
+	process.scale_min = 0.7
+	process.scale_max = 1.3
+	process.angle_min = -180.0
+	process.angle_max = 180.0
+	var gradient := Gradient.new()
+	gradient.offsets = PackedFloat32Array([0.0, 0.2, 1.0])
+	gradient.colors = PackedColorArray([Color(0.95, 1.0, 1.0, 1.0), Color(0.25, 0.85, 1.0, 0.85), Color(0.1, 0.45, 1.0, 0.0)])
+	var ramp := GradientTexture1D.new()
+	ramp.gradient = gradient
+	process.color_ramp = ramp
+	particles.process_material = process
+	var shard := BoxMesh.new()
+	shard.size = Vector3(0.055, 0.2, 0.025)
+	particles.draw_pass_1 = shard
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	mat.vertex_color_use_as_albedo = true
+	mat.emission_enabled = true
+	mat.emission = Color(0.3, 0.85, 1.0)
+	mat.emission_energy_multiplier = 1.6
+	particles.material_override = mat
+	add_child(particles)
+	particles.global_position = at
+	particles.restart()
+	particles.emitting = true
+	var cleanup := create_tween()
+	cleanup.tween_interval(particles.lifetime + 0.25)
+	cleanup.tween_callback(particles.queue_free)
 
 func dash_trail(at: Vector3) -> void:
 	dash_idle = 0.0
@@ -435,7 +490,7 @@ func body_ghost(source: Node3D, tint := Color(0.62, 0.88, 1.0, 0.42), interval :
 	ghost_wait = interval
 	_spawn_body_ghost(source, source.global_transform, tint, lifetime, true)
 
-func _spawn_body_ghost(source: Node3D, pose: Transform3D, tint: Color, lifetime: float, additive: bool) -> void:
+func _spawn_body_ghost(source: Node3D, pose: Transform3D, tint: Color, lifetime: float, additive: bool, hold_time := 0.0) -> void:
 	var ghost := source.duplicate()
 	ghost.set_script(null)
 	ghost.name = "Afterimage"
@@ -458,7 +513,10 @@ func _spawn_body_ghost(source: Node3D, pose: Transform3D, tint: Color, lifetime:
 			mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 			node.material_override = mat
 			node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			create_tween().tween_property(mat, "albedo_color:a", 0.0, lifetime * 0.92)
+			var fade := create_tween()
+			if hold_time > 0.0:
+				fade.tween_interval(hold_time)
+			fade.tween_property(mat, "albedo_color:a", 0.0, lifetime - hold_time)
 	var done := create_tween()
 	done.tween_interval(lifetime)
 	done.tween_callback(ghost.queue_free)
