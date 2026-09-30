@@ -13,6 +13,7 @@ var hp_label: Label
 var crosshair: Control
 var crosshair_parts: Array[ColorRect] = []
 var combo_label: Label
+var fps_label: Label
 var shown_combo := 0
 var combo_pop := 0.0
 
@@ -40,6 +41,7 @@ func _ready() -> void:
 	instructions.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	build_health_bar()
 	build_crosshair()
+	build_fps()
 	status_label = Label.new()
 	status_label.position = Vector2(28, 153)
 	status_label.size = Vector2(980, 32)
@@ -131,6 +133,23 @@ func build_crosshair() -> void:
 		crosshair.add_child(hair)
 		crosshair_parts.append(hair)
 
+func build_fps() -> void:
+	var overlay := CanvasLayer.new()
+	overlay.layer = 40
+	overlay.name = "FpsOverlay"
+	add_child(overlay)
+	fps_label = Label.new()
+	fps_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	fps_label.offset_left = -180.0
+	fps_label.offset_top = 10.0
+	fps_label.offset_right = -16.0
+	fps_label.offset_bottom = 38.0
+	fps_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	fps_label.add_theme_font_size_override("font_size", 18)
+	fps_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	outline(fps_label)
+	overlay.add_child(fps_label)
+
 func outline(label: Label) -> void:
 	label.add_theme_constant_override("outline_size", 2)
 	label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
@@ -199,6 +218,14 @@ func make_label(size: int, color: Color) -> Label:
 	return label
 
 func _process(_delta: float) -> void:
+	var fps := Engine.get_frames_per_second()
+	fps_label.text = "%d FPS" % fps
+	if fps >= 55:
+		fps_label.modulate = Color("b7f0c8")
+	elif fps >= 30:
+		fps_label.modulate = Color("f3c97d")
+	else:
+		fps_label.modulate = Color("f08a7a")
 	if player == null:
 		return
 	status_label.text = player.status_text()
