@@ -12,6 +12,7 @@ var previous_blink_cooldown := 0.0
 var land_time := 0.0
 var get_up_time := 0.0
 var blink_time := 0.0
+var mouse_cut_pose := false
 
 func _ready() -> void:
 	animation_tree.active = true
@@ -50,6 +51,8 @@ func _body_action(player: CharacterBody3D) -> StringName:
 		return &"Knockdown"
 	if player.flinch_time > 0.0:
 		return &"Hit"
+	if mouse_cut_pose:
+		return &"UmbrellaDash"
 	if get_up_time > 0.0:
 		return &"GetUp"
 	if blink_time > 0.0:

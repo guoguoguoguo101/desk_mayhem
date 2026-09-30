@@ -338,11 +338,26 @@ func _render(delta: float) -> void:
 		else:
 			body.global_position = target if body.global_position.distance_to(target)>2.0 else body.global_position.lerp(target,1.0-exp(-35.0*delta))
 		if state.kind=="player": _present_facing(body,state.facing,delta)
+		if state.kind=="player" and body.get("visual"):
+			var cut_age: int = replay.sim.server_tick - int(state.get("action_tick", replay.sim.server_tick))
+			var cutting := str(state.get("action", "")) == "mouse_cut" and cut_age >= BattleRules.MOUSE_CUT_STARTUP and cut_age < BattleRules.MOUSE_CUT_STARTUP + BattleRules.MOUSE_CUT_TRAVEL_TICKS
+			var fox_visual: Node = body.visual.get_node_or_null("FoxVisual")
+			if fox_visual != null:
+				fox_visual.mouse_cut_pose = cutting
+			body.visual.rotation.x = -0.34 if cutting else 0.0
 		if is_instance_valid(mouse_vfx) and str(state.get("action", "")) == "mouse_cut":
-			var age: int = replay.sim.server_tick - int(state.get("action_tick", replay.sim.server_tick))
-			if age >= BattleRules.MOUSE_CUT_STARTUP and age < BattleRules.MOUSE_CUT_STARTUP + BattleRules.MOUSE_CUT_TRAVEL_TICKS and replay.sim.server_tick - int(mouse_ghost_tick.get(id, -100)) >= 2:
-				mouse_ghost_tick[id] = replay.sim.server_tick
-				if body.get("visual"): manager.feedback.body_ghost(body.visual, Color(0.12, 0.65, 1.0, 0.43), 0.03, 0.28)
+			var path: Array = state.get("mouse_cut_path", [])
+			var action_tick := int(state.get("action_tick", -1))
+			var ghost_state: Dictionary = mouse_ghost_tick.get(id, {})
+			var seen := int(ghost_state.get("segments", 0)) if int(ghost_state.get("action_tick", -2)) == action_tick else 0
+			if body.get("visual"):
+				for segment_index in range(seen, path.size()):
+					if segment_index % 2 != 1 or segment_index >= 9:
+						continue
+					var segment: Array = path[segment_index]
+					var end: Vector3 = segment[1]
+					mouse_vfx.spawn_cut_ghost(body.visual, end - body.global_position, end - segment[0], segment_index / 2)
+			mouse_ghost_tick[id] = {"action_tick":action_tick,"segments":path.size()}
 	for id in pot_visuals:
 		var visual = pot_visuals[id]
 		visual.global_position = visual.global_position.lerp(pot_targets[id],1.0-exp(-35.0*delta))

@@ -2,6 +2,9 @@ extends Node3D
 ## Presentation for the mountain battle world's mouse weapon. Never feeds simulation.
 const RIBBON_SHADER = preload("res://vfx/mouse_cut_ribbon.gdshader")
 const ENERGY_SHADER = preload("res://vfx/mouse_cut_energy.gdshader")
+const GHOST_SHADER = preload("res://vfx/mouse_cut_ghost.gdshader")
+const STREAK_SHADER = preload("res://vfx/mouse_cut_streaks.gdshader")
+const PIXEL_TEXTURE = preload("res://assets/vfx/mouse_cut_pixel.svg")
 
 var views: Dictionary = {}
 var bursts: Array = []
@@ -111,7 +114,15 @@ func _make_view() -> Dictionary:
 	ribbon.material_override = ribbon_material
 	ribbon.visible = false
 	add_child(ribbon)
-	return {"mouse":mouse,"outer":outer,"mid":mid,"core":core,"beads":beads,"marker":marker,"ribbon":ribbon,"cut_action_tick":-1,"cut_segments":0}
+	var streaks := MeshInstance3D.new()
+	streaks.name = "MouseCutSpeedLines"
+	streaks.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var streak_material := ShaderMaterial.new()
+	streak_material.shader = STREAK_SHADER
+	streaks.material_override = streak_material
+	streaks.visible = false
+	add_child(streaks)
+	return {"mouse":mouse,"outer":outer,"mid":mid,"core":core,"beads":beads,"marker":marker,"ribbon":ribbon,"streaks":streaks,"cut_action_tick":-1,"cut_segments":0,"cut_fade":0.0}
 
 func sync_world(entities: Dictionary, tick: int, delta: float) -> void:
 	clock += delta
@@ -166,21 +177,32 @@ func sync_world(entities: Dictionary, tick: int, delta: float) -> void:
 				view.cut_action_tick = action_tick
 				view.cut_segments = 0
 				view.ribbon.visible = false
+				view.streaks.visible = false
 			var path: Array = state.get("mouse_cut_path", [])
 			if path.size() != int(view.cut_segments):
 				_update_cut_ribbon(view.ribbon, path)
+				_update_cut_streaks(view.streaks, path)
 			(view.ribbon.material_override as ShaderMaterial).set_shader_parameter("time", clock)
+			(view.streaks.material_override as ShaderMaterial).set_shader_parameter("time", clock)
+			(view.ribbon.material_override as ShaderMaterial).set_shader_parameter("opacity", 1.0)
+			(view.streaks.material_override as ShaderMaterial).set_shader_parameter("opacity", 1.0)
+			view.cut_fade = 0.3
 			for i in range(int(view.cut_segments), path.size()):
 				var segment: Array = path[i]
-				if i % 2 == 0:
+				if i >= 4 and i % 2 == 0:
 					_digital_frame(segment[0], segment[1], i)
 			view.cut_segments = path.size()
 		else:
-			view.ribbon.visible = false
+			view.cut_fade = maxf(0.0, float(view.cut_fade) - delta)
+			var fade := float(view.cut_fade) / 0.3
+			(view.ribbon.material_override as ShaderMaterial).set_shader_parameter("opacity", fade)
+			(view.streaks.material_override as ShaderMaterial).set_shader_parameter("opacity", fade)
+			view.ribbon.visible = fade > 0.0 and int(view.cut_segments) > 0
+			view.streaks.visible = view.ribbon.visible
 	for id in views.keys():
 		if active.has(id): continue
 		var old: Dictionary = views[id]
-		for node in [old.mouse, old.outer, old.mid, old.core, old.marker, old.ribbon]: node.queue_free()
+		for node in [old.mouse, old.outer, old.mid, old.core, old.marker, old.ribbon, old.streaks]: node.queue_free()
 		for bead in old.beads: bead.queue_free()
 		views.erase(id)
 	for burst in bursts.duplicate():
@@ -235,6 +257,112 @@ func _update_cut_ribbon(ribbon: MeshInstance3D, path: Array) -> void:
 		_ribbon_strip(surface, a + Vector3.UP * 0.3, a + Vector3.UP * 1.25, b + Vector3.UP * 0.3, b + Vector3.UP * 1.25, u0, u1)
 	ribbon.mesh = surface.commit()
 	ribbon.visible = ribbon.mesh != null
+
+func _update_cut_streaks(streaks: MeshInstance3D, path: Array) -> void:
+	if path.is_empty():
+		streaks.visible = false
+		return
+	var surface := SurfaceTool.new()
+	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var traveled := 0.0
+	for segment in path:
+		var a: Vector3 = segment[0]
+		var b: Vector3 = segment[1]
+		var flat := b - a
+		flat.y = 0.0
+		var length := flat.length()
+		if length < 0.001:
+			continue
+		var side := flat / length
+		side = side.cross(Vector3.UP)
+		var u0 := traveled * 0.8
+		traveled += length
+		var u1 := traveled * 0.8
+		for lane in 4:
+			var lateral: float = [-0.58, -0.22, 0.25, 0.57][lane]
+			var height: float = [0.12, 0.72, 1.22, 0.3][lane]
+			var width := 0.035 if lane != 2 else 0.055
+			var tint := Color(1.0, 0.55, 0.24, 0.58) if lane == 3 else Color(0.35, 0.86, 1.0, 0.72)
+			var base_a := a + side * lateral + Vector3.UP * height
+			var base_b := b + side * lateral + Vector3.UP * height
+			surface.set_color(tint)
+			_ribbon_strip(surface, base_a - side * width, base_a + side * width, base_b - side * width, base_b + side * width, u0, u1)
+	streaks.mesh = surface.commit()
+	streaks.visible = streaks.mesh != null
+
+func spawn_cut_ghost(source: Node3D, offset: Vector3, travel: Vector3, index: int) -> void:
+	if not is_instance_valid(source):
+		return
+	var ghost := source.duplicate()
+	ghost.set_script(null)
+	ghost.name = "MouseCutFoxAfterimage"
+	ghost.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(ghost)
+	ghost.global_transform = source.global_transform
+	ghost.global_position += offset
+	var lifetime := 0.48 - float(index) * 0.025
+	for node in ghost.find_children("*", "", true, false):
+		node.process_mode = Node.PROCESS_MODE_DISABLED
+		if node is AnimationTree:
+			(node as AnimationTree).active = false
+		elif node is AnimationPlayer:
+			(node as AnimationPlayer).active = false
+		elif node is MeshInstance3D and node.visible:
+			var mesh_node := node as MeshInstance3D
+			var original := mesh_node.get_active_material(0) as BaseMaterial3D
+			var material := ShaderMaterial.new()
+			material.shader = GHOST_SHADER
+			material.set_shader_parameter("opacity", 0.82 - float(index) * 0.07)
+			material.set_shader_parameter("dissolve", float(index) * 0.07)
+			material.set_shader_parameter("seed", float(index) * 7.17)
+			if original != null and original.albedo_texture != null:
+				material.set_shader_parameter("base_texture", original.albedo_texture)
+				material.set_shader_parameter("has_texture", true)
+			mesh_node.material_override = material
+			mesh_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			var dissolve := create_tween()
+			dissolve.tween_interval(0.08)
+			dissolve.tween_property(material, "shader_parameter/dissolve", 1.0, lifetime - 0.08)
+			var fade := create_tween()
+			fade.tween_interval(0.19)
+			fade.tween_property(material, "shader_parameter/opacity", 0.0, lifetime - 0.19)
+	_spawn_cut_pixels(ghost.global_position + Vector3.UP * 0.75, travel, index)
+	get_tree().create_timer(lifetime).timeout.connect(ghost.queue_free)
+
+func _spawn_cut_pixels(at: Vector3, travel: Vector3, index: int) -> void:
+	var particles := GPUParticles3D.new()
+	particles.name = "MouseCutGhostPixels"
+	particles.emitting = false
+	particles.one_shot = true
+	particles.amount = 9 + index * 2
+	particles.lifetime = 0.38
+	particles.explosiveness = 0.95
+	particles.local_coords = false
+	particles.visibility_aabb = AABB(Vector3(-3, -3, -3), Vector3(6, 6, 6))
+	particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var process := ParticleProcessMaterial.new()
+	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	process.emission_sphere_radius = 0.65
+	process.direction = -travel.normalized() + Vector3.UP * 0.25
+	process.spread = 48.0
+	process.initial_velocity_min = 0.7
+	process.initial_velocity_max = 2.3
+	process.gravity = Vector3(0.0, -0.5, 0.0)
+	process.scale_min = 0.4
+	process.scale_max = 1.0
+	particles.process_material = process
+	var square := QuadMesh.new()
+	square.size = Vector2(0.12, 0.12)
+	particles.draw_pass_1 = square
+	var material := _glow(Color(0.35, 0.85, 1.0), 0.82)
+	material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	material.albedo_texture = PIXEL_TEXTURE
+	particles.material_override = material
+	add_child(particles)
+	particles.global_position = at
+	particles.restart()
+	particles.emitting = true
+	particles.finished.connect(particles.queue_free)
 
 func _digital_frame(a: Vector3, b: Vector3, variant: int) -> void:
 	var forward := b - a

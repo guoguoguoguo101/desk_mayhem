@@ -1,0 +1,65 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://vfx/mouse_cut_full_preview.gd" id="1_preview"]
+[ext_resource type="Script" path="res://vfx/mouse_skill_vfx.gd" id="2_effect"]
+[ext_resource type="PackedScene" path="res://assets/characters/fox_visual.tscn" id="3_fox"]
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_floor"]
+size = Vector2(20, 11)
+
+[sub_resource type="StandardMaterial3D" id="Material_floor"]
+albedo_color = Color(0.075, 0.085, 0.11, 1)
+metallic = 0.12
+roughness = 0.58
+
+[sub_resource type="Environment" id="Environment_preview"]
+background_mode = 1
+background_color = Color(0.025, 0.035, 0.065, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.34, 0.45, 0.63, 1)
+ambient_light_energy = 0.55
+glow_enabled = true
+glow_intensity = 0.7
+
+[node name="MouseCutFullPreview" type="Node3D"]
+script = ExtResource("1_preview")
+metadata/movie_file = "res://recordings/mouse_cut_full_preview.avi"
+
+[node name="Floor" type="MeshInstance3D" parent="."]
+mesh = SubResource("PlaneMesh_floor")
+material_override = SubResource("Material_floor")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_preview")
+
+[node name="Actor" type="Node3D" parent="."]
+position = Vector3(-4, 0.95, 0)
+rotation = Vector3(0, -1.570796, 0)
+
+[node name="FoxVisual" parent="Actor" instance=ExtResource("3_fox")]
+
+[node name="StrawDummy" type="Node3D" parent="."]
+
+[node name="DummyVisual" type="Node3D" parent="StrawDummy"]
+
+[node name="MouseSkillVFX" type="Node3D" parent="."]
+script = ExtResource("2_effect")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+position = Vector3(0, 3.0, 8.5)
+fov = 55.0
+current = true
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.85, -0.5, 0)
+light_energy = 1.45
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Instructions" type="Label" parent="CanvasLayer"]
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 1300.0
+offset_bottom = 90.0
+theme_override_font_sizes/font_size = 21
+text = "X 完整技能预览｜Q 结束并保存录像｜E/空格 重播｜P 暂停｜1 原速 2 0.35× 3 0.2× 4 0.1×｜C 镜头｜H 隐藏文字"
