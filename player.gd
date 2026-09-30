@@ -545,7 +545,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			action = str({KEY_Q:"skill_a0",KEY_E:"skill_a1",KEY_F:"skill_b0",KEY_C:"skill_b1",KEY_SPACE:"jump",KEY_SHIFT:"blink"}.get(event.physical_keycode,""))
 			if str(battle_net.get("battle_map_id")) == "mountain_courtyard":
 				if event.physical_keycode == KEY_1: action = "mouse_primary"
-				if event.physical_keycode == KEY_2: action = "mouse_secondary"
+				if event.physical_keycode == KEY_X: action = "mouse_secondary"
 		if not action.is_empty():
 			battle_net.request_action(action,aim_direction())
 		return
@@ -1424,8 +1424,7 @@ func short_blink() -> void:
 		FloatRules.end_session(self)
 	velocity = Vector3.ZERO
 	blink_cooldown = CD_BLINK
-	feedback.blink_effect(start_position + Vector3.UP, global_position + Vector3.UP)
-	feedback.body_ghost(visual, Color(0.55, 0.92, 1.0, 0.5))
+	feedback.blink_effect(start_position + Vector3.UP, global_position + Vector3.UP, visual)
 
 func jump() -> void:
 	if downed or knockdown or mounted or dash_time > 0.0 or action_lock > 0.0 or juggled or kick_bounce:

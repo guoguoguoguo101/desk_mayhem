@@ -44,6 +44,8 @@ var pot_visuals: Dictionary = {}
 var pot_targets: Dictionary = {}
 var mouse_vfx: Node3D
 var mouse_ghost_tick: Dictionary = {}
+var mouse_cut_burst_paths: Dictionary = {}
+var mouse_cut_camera_key := ""
 var render_lives: Dictionary = {}
 var seen_events: Dictionary = {}
 var blink_events := 0
@@ -314,6 +316,15 @@ func _body(id: String) -> Node:
 func _render(delta: float) -> void:
 	if is_instance_valid(mouse_vfx):
 		mouse_vfx.sync_world(replay.sim.entities, replay.sim.server_tick, delta)
+	var camera_rig := manager.get_parent().get_node_or_null("CameraRig")
+	if camera_rig != null and camera_rig.has_method("set_mouse_cut_focus"):
+		var local_state: Dictionary = replay.sim.entities.get(entity_id, {})
+		var cut_phase := ""
+		if str(local_state.get("action", "")) == "mouse_cut":
+			var cut_age: int = replay.sim.server_tick - int(local_state.get("action_tick", replay.sim.server_tick))
+			if cut_age >= BattleRules.MOUSE_CUT_STARTUP and cut_age < BattleRules.MOUSE_CUT_STARTUP + BattleRules.MOUSE_CUT_TRAVEL_TICKS:
+				cut_phase = "travel"
+		camera_rig.set_mouse_cut_focus(cut_phase, local_state.get("mouse_cut_start", Vector3.ZERO), local_state.get("mouse_cut_end", Vector3.ZERO))
 	for id in replay.sim.entities:
 		var body := _body(str(id))
 		if body==null: continue
@@ -331,7 +342,7 @@ func _render(delta: float) -> void:
 			var age: int = replay.sim.server_tick - int(state.get("action_tick", replay.sim.server_tick))
 			if age >= BattleRules.MOUSE_CUT_STARTUP and age < BattleRules.MOUSE_CUT_STARTUP + BattleRules.MOUSE_CUT_TRAVEL_TICKS and replay.sim.server_tick - int(mouse_ghost_tick.get(id, -100)) >= 2:
 				mouse_ghost_tick[id] = replay.sim.server_tick
-				if body.get("visual"): manager.feedback.body_ghost(body.visual, Color(0.28, 0.89, 1.0, 0.72))
+				if body.get("visual"): manager.feedback.body_ghost(body.visual, Color(0.12, 0.65, 1.0, 0.43), 0.03, 0.28)
 	for id in pot_visuals:
 		var visual = pot_visuals[id]
 		visual.global_position = visual.global_position.lerp(pot_targets[id],1.0-exp(-35.0*delta))
@@ -378,7 +389,7 @@ func _event_key(event: Dictionary) -> String:
 func _present_events(events: Array, authoritative: bool) -> void:
 	for event in events:
 		var type := str(event.get("type",""))
-		if type not in ["combat","blink","action_start","mouse_launch","mouse_link","mouse_pull","mouse_swap","mouse_cut_burst","mouse_miss"] and not authoritative: continue
+		if type not in ["combat","blink","action_start","mouse_launch","mouse_link","mouse_pull","mouse_pull_launch","mouse_swap","mouse_cut_burst","mouse_miss"] and not authoritative: continue
 		if type=="attack_result": continue
 		if int(event.get("round_id",round_id))<round_id: continue
 		var key := _event_key(event)
@@ -392,16 +403,33 @@ func _present_events(events: Array, authoritative: bool) -> void:
 				if is_instance_valid(mouse_vfx): mouse_vfx.burst_link(vector(event.get("position", [])))
 				manager.feedback.impact(vector(event.get("position", [])), false)
 			"mouse_pull":
-				if is_instance_valid(mouse_vfx): mouse_vfx.burst_link(vector(event.get("to", [])) + Vector3.UP * 0.8)
+				if is_instance_valid(mouse_vfx): mouse_vfx.burst_link(vector(event.get("from", [])) + Vector3.UP * 0.8)
+			"mouse_pull_launch":
+				if is_instance_valid(mouse_vfx): mouse_vfx.burst_launch(vector(event.get("position", [])) + Vector3.UP * 0.8)
 			"mouse_swap":
 				if is_instance_valid(mouse_vfx): mouse_vfx.burst_swap(vector(event.get("from", [])), vector(event.get("to", [])))
 			"mouse_cut_burst":
 				if is_instance_valid(mouse_vfx): mouse_vfx.burst_cut(vector(event.get("from", [])), vector(event.get("to", [])))
+				if str(event.get("entity_id", "")) == entity_id:
+					mouse_cut_burst_paths[int(event.get("attack_seq", -1))] = {"from":vector(event.get("from", [])), "to":vector(event.get("to", []))}
+					while mouse_cut_burst_paths.size() > 32:
+						mouse_cut_burst_paths.erase(mouse_cut_burst_paths.keys()[0])
 			"combat":
 				var body := _body(str(event.get("victim_id","")))
 				if body==null: continue
 				body.flinch_time = 0.15
 				var attack_name := str(event.get("attack",""))
+				if attack_name == "mouse_cut" and str(event.get("attacker_id", "")) == entity_id:
+					var cut_key := "%d:%d" % [int(event.get("round_id", round_id)), int(event.get("attack_seq", -1))]
+					if mouse_cut_camera_key != cut_key:
+						mouse_cut_camera_key = cut_key
+						var camera_rig := manager.get_parent().get_node_or_null("CameraRig")
+						if camera_rig != null and camera_rig.has_method("begin_mouse_cut_cinematic"):
+							var path: Dictionary = mouse_cut_burst_paths.get(int(event.get("attack_seq", -1)), {})
+							var attacker_state: Dictionary = replay.sim.entities.get(entity_id, {})
+							var start: Vector3 = path.get("from", attacker_state.get("mouse_cut_start", body.global_position))
+							var finish: Vector3 = path.get("to", attacker_state.get("mouse_cut_end", body.global_position))
+							camera_rig.begin_mouse_cut_cinematic(start, finish, body, BattleRules.MOUSE_AIR_HOLD + 0.14)
 				var heavy := attack_name in ["punch_uppercut", "kick_front", "umbrella_uppercut", "umbrella_spin", "pot_slam", "pot_slam_air"]
 				var damage := int(event.get("damage", 0))
 				if attack_name == "umbrella_spin":
@@ -417,9 +445,8 @@ func _present_events(events: Array, authoritative: bool) -> void:
 				blink_events += 1
 				var blink_slot := int(event.get("slot", -1))
 				var blinker: Node = manager.local_player if blink_slot == slot else manager.puppet_for(blink_slot + 1)
-				manager.feedback.blink_effect(vector(event.get("from",[]))+Vector3.UP,vector(event.get("to",[]))+Vector3.UP)
-				if blinker and blinker.get("visual"):
-					manager.feedback.body_ghost(blinker.visual, Color(0.55, 0.92, 1.0, 0.5))
+				var blink_visual: Node3D = blinker.visual if blinker and blinker.get("visual") else null
+				manager.feedback.blink_effect(vector(event.get("from",[]))+Vector3.UP,vector(event.get("to",[]))+Vector3.UP, blink_visual)
 			"action_start":
 				var index := int(event.get("slot",-1))
 				var actor: Node = manager.local_player if index==slot else manager.puppet_for(index+1)
@@ -464,6 +491,10 @@ func _remove_pot(id) -> void:
 
 func shutdown() -> void:
 	closing = true
+	var camera_rig := manager.get_parent().get_node_or_null("CameraRig")
+	if camera_rig != null and camera_rig.has_method("set_mouse_cut_focus"):
+		camera_rig.set_mouse_cut_focus("", Vector3.ZERO, Vector3.ZERO)
+		camera_rig.cancel_mouse_cut_cinematic()
 	local_render_offset = Vector3.ZERO
 	local_correction_remaining = 0.0
 	for view in npc_views.values(): view.queue_free()

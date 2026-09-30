@@ -71,6 +71,7 @@ func _batch_meshes(node: Node, parent_transform: Transform3D, instances: Array, 
 		visual.name = kit
 		visual.multimesh = batch
 		visual.material_override = node.material_override
+		visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(visual)
 	for child in node.get_children():
 		_batch_meshes(child, local, instances, kit)

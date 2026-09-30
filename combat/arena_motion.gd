@@ -77,6 +77,25 @@ static func configure_dummy(body: CharacterBody3D, alive: bool) -> void:
 	var capsule: CapsuleShape3D = body.get_child(0).shape
 	capsule.radius = 0.62
 
+static func reconcile_teleport_ground(body: CharacterBody3D, state: Dictionary) -> void:
+	# A swap may place a juggled character directly on a floor. Resolve that
+	# contact now; a character moved into open air falls during the next step.
+	var contact := body.move_and_collide(Vector3.DOWN * 0.08, true)
+	if contact == null or contact.get_normal().y <= 0.6:
+		return
+	if bool(state.get("juggled", false)) or bool(state.get("kick_bounce", false)):
+		state.stun = maxf(float(state.get("stun", 0.0)), FloatRules.KNOCKDOWN_TIME)
+		state.protection = maxf(float(state.get("protection", 0.0)), FloatRules.KNOCKDOWN_TIME)
+	state.juggled = false
+	state.kick_bounce = false
+	state.bounce_pending = false
+	state.mouse_air_hold = 0.0
+	state.mouse_ground_launch = false
+	state.mouse_air_used = false
+	var velocity: Vector3 = state.get("velocity", Vector3.ZERO)
+	velocity.y = maxf(0.0, velocity.y)
+	state.velocity = velocity
+
 static func step(body: CharacterBody3D, state: Dictionary, move: Vector3, dt: float = DT, blockers: Array = []) -> void:
 	var start := body.global_position
 	var velocity: Vector3 = state.get("velocity", Vector3.ZERO)
@@ -106,16 +125,25 @@ static func step(body: CharacterBody3D, state: Dictionary, move: Vector3, dt: fl
 	if slam_hold > 0.0:
 		state.slam_hold = maxf(0.0, slam_hold - dt)
 	var mouse_hold := float(state.get("mouse_air_hold", 0.0))
-	if mouse_hold > 0.0 and airborne:
+	if mouse_hold > 0.0 and (airborne or bool(state.get("mouse_ground_launch", false))):
+		velocity.x = 0.0
 		velocity.y = 0.0
+		velocity.z = 0.0
 		state.mouse_air_hold = maxf(0.0, mouse_hold - dt)
 		if float(state.mouse_air_hold) <= 0.0:
-			velocity.y = BattleRules.MOUSE_AIR_LIFT
+			var ground_launch := bool(state.get("mouse_ground_launch", false))
+			state.mouse_ground_launch = false
+			if ground_launch:
+				state.juggled = true
+				velocity.y = 7.6
+			else:
+				velocity.y = BattleRules.MOUSE_AIR_LIFT
 			var lift_direction: Vector3 = state.get("mouse_air_direction", Vector3.ZERO)
 			velocity.x = lift_direction.x * 2.0
 			velocity.z = lift_direction.z * 2.0
 	else:
 		state.mouse_air_hold = 0.0
+		state.mouse_ground_launch = false
 		velocity.y -= (20.0 if bool(state.get("bounce_pending",false)) or not airborne else FloatRules.AIR_GRAVITY)*dt
 	var remaining := velocity*dt
 	for _i in 4:
@@ -133,6 +161,7 @@ static func step(body: CharacterBody3D, state: Dictionary, move: Vector3, dt: fl
 					state.protection = FloatRules.KNOCKDOWN_TIME
 				state.juggled = false
 				state.mouse_air_hold = 0.0
+				state.mouse_ground_launch = false
 				state.mouse_air_used = false
 				state.kick_bounce = false
 				velocity.y = 0.0

@@ -36,7 +36,7 @@ const ATTACKS := {
 }
 
 
-const SCHEMA := 5
+const SCHEMA := 10
 const DUMMY_SPAWNS := ArenaLayout.DUMMY_SPAWNS
 var map_id := ArenaCatalog.COURTYARD
 var arena_layout = ArenaLayout
@@ -139,9 +139,68 @@ func _simulate_players(delta: float) -> void:
 		if now_ms()-int(state.get("last_input",0))>200: state.move = Vector3.ZERO
 		var was_dashing := float(state.get("dash",0.0))>0.0
 		Motion.step(state.body,state,state.move,delta,obstacles[id])
+		_advance_mouse_pull(id, obstacles[id])
 		if state.kind=="player" and was_dashing and not bool(state.get("dash_hit",false)):
 			_resolve_dash_contact(id)
 		_release_buffered_attack(id)
+
+func _stop_mouse_pull(state: Dictionary) -> void:
+	state.mouse_pull_remaining = 0.0
+	state.mouse_pull_ticks = 0
+	state.mouse_pull_direction = Vector3.ZERO
+	state.mouse_pull_owner = ""
+	state.mouse_pull_owner_life = 0
+	state.mouse_pull_launch = false
+	state.mouse_pull_seq = -1
+
+func _advance_mouse_pull(id: String, blockers: Array) -> void:
+	var state: Dictionary = entities[id]
+	var ticks := int(state.get("mouse_pull_ticks", 0))
+	if ticks <= 0 or bool(state.get("dead", false)):
+		return
+	var owner_id := str(state.get("mouse_pull_owner", ""))
+	if round_reset_at > 0 or not entities.has(owner_id) or bool(entities[owner_id].get("dead", false)) or int(entities[owner_id].life) != int(state.get("mouse_pull_owner_life", -1)):
+		_stop_mouse_pull(state)
+		return
+	var remaining := float(state.get("mouse_pull_remaining", 0.0))
+	var direction: Vector3 = state.get("mouse_pull_direction", Vector3.ZERO)
+	var distance := remaining / float(ticks)
+	var start: Vector3 = state.position
+	var travel := direction * distance
+	var dynamic_fraction := float(Motion.dynamic_cast(start, start + travel, blockers).fraction)
+	state.body.move_and_collide(travel * dynamic_fraction)
+	state.position = state.body.global_position
+	var advanced := maxf(0.0, (state.position - start).dot(direction))
+	state.mouse_pull_remaining = maxf(0.0, remaining - advanced)
+	state.mouse_pull_ticks = ticks - 1
+	var blocked := advanced < distance - 0.001
+	if blocked or state.mouse_pull_ticks <= 0:
+		var launch := bool(state.get("mouse_pull_launch", false)) and not blocked
+		var launch_seq := int(state.get("mouse_pull_seq", -1))
+		_stop_mouse_pull(state)
+		if launch:
+			var owner: Dictionary = entities[owner_id]
+			var away: Vector3 = state.position - owner.position
+			away.y = 0.0
+			if away.length_squared() < 0.001:
+				away = owner.facing
+			away = away.normalized()
+			var airborne := bool(state.get("juggled", false))
+			var velocity: Vector3 = state.get("velocity", Vector3.ZERO)
+			velocity.x = away.x * 1.4
+			velocity.z = away.z * 1.4
+			if airborne:
+				if not bool(state.get("mouse_air_used", false)):
+					velocity.y = maxf(velocity.y, BattleRules.MOUSE_PULL_AIR_LIFT)
+					state.mouse_air_used = true
+			else:
+				velocity.y = BattleRules.MOUSE_PULL_LAUNCH_Y
+			state.velocity = velocity
+			state.juggled = true
+			state.kick_bounce = false
+			state.bounce_pending = false
+			state.stun = maxf(float(state.get("stun", 0.0)), BattleRules.MOUSE_PULL_LAUNCH_STUN)
+			_broadcast({"type":"mouse_pull_launch","entity_id":owner_id,"target_id":id,"attack_seq":launch_seq,"position":[state.position.x,state.position.y,state.position.z]})
 
 func _resolve_dash_contact(attacker_id: String) -> void:
 	var attacker: Dictionary = entities[attacker_id]
@@ -257,11 +316,20 @@ func _create_entity(kind: String, slot: int, position: Vector3) -> String:
 	entities[id].mouse_link_id = ""
 	entities[id].mouse_link_life = 0
 	entities[id].mouse_link_until = 0
+	entities[id].mouse_tug_used = false
 	entities[id].mouse_cast_ready = 0
 	entities[id].mouse_skill2_ready = 0
 	entities[id].mouse_air_hold = 0.0
 	entities[id].mouse_air_used = false
+	entities[id].mouse_ground_launch = false
 	entities[id].mouse_air_direction = Vector3.ZERO
+	entities[id].mouse_pull_remaining = 0.0
+	entities[id].mouse_pull_ticks = 0
+	entities[id].mouse_pull_direction = Vector3.ZERO
+	entities[id].mouse_pull_owner = ""
+	entities[id].mouse_pull_owner_life = 0
+	entities[id].mouse_pull_launch = false
+	entities[id].mouse_pull_seq = -1
 	entities[id].mouse_cut_path = []
 	entities[id].mouse_cut_targets = {}
 	entities[id].mouse_cut_blocked = false
@@ -379,6 +447,7 @@ func _clear_mouse_link(state: Dictionary) -> void:
 	state.mouse_link_id = ""
 	state.mouse_link_life = 0
 	state.mouse_link_until = 0
+	state.mouse_tug_used = false
 	state.mouse_cast_ready = now_ms() + BattleRules.cooldown_ms("mouse_cast")
 
 func _tick_mouse_links() -> void:
@@ -428,14 +497,25 @@ func _resolve_mouse_action(attacker_id: String, intent_id: String, requested_aim
 		var target: Dictionary = entities[target_id]
 		var previous: Vector3 = target.position
 		var toward: Vector3 = attacker.position - target.position
-		if not bool(target.get("juggled", false)):
-			toward.y = 0.0
-		elif absf(toward.y) > 2.0:
-			toward.y = signf(toward.y) * 2.0
-		var travel := toward.normalized() * minf(toward.length(), BattleRules.MOUSE_PULL_DISTANCE) if toward.length_squared() > 0.0001 else Vector3.ZERO
-		if travel.length_squared() > 0.0001:
-			target.body.move_and_collide(travel)
-			target.position = target.body.global_position
+		toward.y = 0.0
+		var close_launch := toward.length() <= BattleRules.MOUSE_PULL_LAUNCH_RANGE
+		if not close_launch and bool(attacker.get("mouse_tug_used", false)):
+			_deny_attack(attacker_id, attack_seq)
+			return
+		var distance := minf(maxf(0.0, toward.length() - BattleRules.MOUSE_PULL_FRONT_GAP), BattleRules.MOUSE_PULL_DISTANCE) if close_launch else minf(toward.length(), BattleRules.MOUSE_PULL_DISTANCE)
+		target.mouse_pull_remaining = distance
+		target.mouse_pull_ticks = BattleRules.MOUSE_PULL_TICKS
+		target.mouse_pull_direction = toward.normalized() if distance > 0.001 else Vector3.ZERO
+		target.mouse_pull_owner = attacker_id
+		target.mouse_pull_owner_life = int(attacker.life)
+		target.mouse_pull_launch = close_launch
+		target.mouse_pull_seq = attack_seq
+		target.dash = 0.0
+		if str(target.get("action", "")) == "mouse_cut":
+			target.action = ""
+			target.end_tick = server_tick
+			target.mouse_cut_path = []
+			target.mouse_cut_targets = {}
 		target.stun = maxf(float(target.get("stun", 0.0)), BattleRules.MOUSE_PULL_STUN)
 		var velocity: Vector3 = target.get("velocity", Vector3.ZERO)
 		velocity.x = 0.0
@@ -443,8 +523,11 @@ func _resolve_mouse_action(attacker_id: String, intent_id: String, requested_aim
 		target.velocity = velocity
 		attacker.lock = 0.12
 		attacker.action_seq = attack_seq
-		_clear_mouse_link(attacker)
-		_broadcast({"type":"mouse_pull","entity_id":attacker_id,"target_id":target_id,"attack_seq":attack_seq,"from":[previous.x,previous.y,previous.z],"to":[target.position.x,target.position.y,target.position.z]})
+		if close_launch:
+			_clear_mouse_link(attacker)
+		else:
+			attacker.mouse_tug_used = true
+		_broadcast({"type":"mouse_pull","entity_id":attacker_id,"target_id":target_id,"attack_seq":attack_seq,"launch":close_launch,"from":[previous.x,previous.y,previous.z],"to":[previous.x + target.mouse_pull_direction.x * distance,previous.y,previous.z + target.mouse_pull_direction.z * distance]})
 		return
 	if now < int(attacker.get("mouse_skill2_ready", 0)):
 		_deny_attack(attacker_id, attack_seq)
@@ -473,7 +556,18 @@ func _resolve_mouse_action(attacker_id: String, intent_id: String, requested_aim
 			velocity.x = 0.0
 			velocity.z = 0.0
 			state.velocity = velocity
+			if float(state.get("dash", 0.0)) > 0.0:
+				state.followup = 0
+			state.dash = 0.0
+			state.dash_hit = false
+			if str(state.get("action", "")) == "mouse_cut":
+				state.action = ""
+				state.end_tick = server_tick
+				state.mouse_cut_path = []
+				state.mouse_cut_targets = {}
+			_stop_mouse_pull(state)
 			state.stun = maxf(float(state.get("stun", 0.0)), BattleRules.MOUSE_SWAP_STUN)
+			Motion.reconcile_teleport_ground(state.body, state)
 		attacker.action_seq = attack_seq
 		attacker.mouse_skill2_ready = now + BattleRules.cooldown_ms("mouse_swap")
 		_clear_mouse_link(attacker)
@@ -578,6 +672,7 @@ func _advance_mouse_projectiles() -> void:
 			attacker.mouse_link_id = target_id
 			attacker.mouse_link_life = int(target.life)
 			attacker.mouse_link_until = server_tick + BattleRules.MOUSE_LINK_TICKS
+			attacker.mouse_tug_used = false
 			target.stun = maxf(float(target.get("stun", 0.0)), 0.12)
 			_broadcast({"type":"mouse_link","entity_id":attacker_id,"target_id":target_id,"target_life":int(target.life),"attack_seq":int(flight.attack_seq),"position":[flight.position.x,flight.position.y,flight.position.z]})
 		elif wall_fraction < 1.0 or float(flight.distance) >= BattleRules.MOUSE_RANGE - 0.001:
@@ -975,16 +1070,20 @@ func _commit_hits(hits: Array) -> void:
 		if bool(presented.knockdown):
 			victim.knockdown_time = stun
 		victim.dash = 0.0
+		_stop_mouse_pull(victim)
 		victim.buffer_attack = ""
 		victim.buffer_seq = -1
 		victim.action = ""
 		victim.end_tick = server_tick
-		if str(chosen.attack) == "mouse_cut" and bool(chosen.juggled_before) and not bool(victim.get("mouse_air_used", false)):
+		if str(chosen.attack) == "mouse_cut" and (not bool(chosen.juggled_before) or not bool(victim.get("mouse_air_used", false))):
 			victim.mouse_air_hold = BattleRules.MOUSE_AIR_HOLD
-			victim.mouse_air_used = true
+			victim.mouse_ground_launch = not bool(chosen.juggled_before)
+			if bool(chosen.juggled_before):
+				victim.mouse_air_used = true
 			victim.mouse_air_direction = entities[chosen.attacker_id].get("action_direction", Vector3.FORWARD)
 		elif str(chosen.attack) != "mouse_cut":
 			victim.mouse_air_hold = 0.0
+			victim.mouse_ground_launch = false
 		victim.last_attacker = str(chosen.attacker_id)
 		victim.last_attack = str(chosen.attack)
 		victim.last_hit_tick = server_tick
@@ -1221,6 +1320,8 @@ func _on_entity_death(attacker_id: String, victim_id: String, award_round := tru
 	victim.action = ""
 	victim.mouse_projectile = {}
 	victim.mouse_air_hold = 0.0
+	victim.mouse_ground_launch = false
+	_stop_mouse_pull(victim)
 	_clear_mouse_link(victim)
 	for owner in entities.values():
 		if str(owner.get("mouse_link_id", "")) == victim_id:
@@ -1255,8 +1356,11 @@ func _respawn_entity(state: Dictionary) -> void:
 	state.action = ""
 	state.mouse_projectile = {}
 	state.mouse_link_id = ""
+	state.mouse_tug_used = false
 	state.mouse_air_used = false
+	state.mouse_ground_launch = false
 	state.mouse_air_direction = Vector3.ZERO
+	_stop_mouse_pull(state)
 	state.mouse_cut_path = []
 	state.mouse_cut_targets = {}
 	state.mouse_cut_blocked = false

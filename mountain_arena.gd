@@ -11,6 +11,8 @@ const PAVER_SPECULAR := 0.08
 # 进演武场后按 F7 轮换。数值是太阳、环境光和背景色，不改战斗。
 # 第 2 渲染层只给人物轮廓光，场景网格不在这一层。
 const CHARACTER_RIM_LAYER := 2
+# 房子和柱、屋面继续投阴影。花木、竹、灯和碎石不进阴影贴图。
+const SHADOW_KIT_IDS: Array[String] = ["main_hall", "wood_pillar", "cinnabar_pillar", "roof_tile", "roof_ridge"]
 const DAY_TIMES: Array[Dictionary] = [
 	{
 		"name": "白天",
@@ -137,21 +139,61 @@ func place_kits() -> void:
 	var parsed = JSON.parse_string(FileAccess.get_file_as_string(PLACEMENTS_PATH))
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return
-	var cache := {}
+	var grouped := {}
 	for item in parsed.get("placements", []):
 		var kit_id := str(item.get("kit", ""))
-		var packed: PackedScene = cached_kit(cache, kit_id)
-		if packed == null:
-			continue
-		var node := packed.instantiate()
-		node.name = kit_id
+		if not grouped.has(kit_id):
+			grouped[kit_id] = []
 		var position: Array = item.position
 		var rotation: Array = item.quaternion
 		var scale: Array = item.scale
-		node.position = Vector3(float(position[0]), float(position[1]), float(position[2]))
-		node.quaternion = Quaternion(float(rotation[0]), float(rotation[1]), float(rotation[2]), float(rotation[3]))
-		node.scale = Vector3(float(scale[0]), float(scale[1]), float(scale[2]))
-		add_child(node)
+		var basis := Basis(Quaternion(float(rotation[0]), float(rotation[1]), float(rotation[2]), float(rotation[3])))
+		basis = basis.scaled(Vector3(float(scale[0]), float(scale[1]), float(scale[2])))
+		grouped[kit_id].append(Transform3D(basis, Vector3(float(position[0]), float(position[1]), float(position[2]))))
+	var cache := {}
+	for kit_id in grouped:
+		_batch_kit(cache, str(kit_id), grouped[kit_id])
+
+func _batch_kit(cache: Dictionary, kit_id: String, placements: Array) -> void:
+	var packed: PackedScene = cached_kit(cache, kit_id)
+	if packed == null:
+		return
+	var prototype := packed.instantiate()
+	var cast_shadow := kit_id in SHADOW_KIT_IDS
+	_emit_mesh_batch(prototype, Transform3D.IDENTITY, placements, kit_id, cast_shadow, false)
+	if kit_id == "palace_lantern" or kit_id == "stone_lantern":
+		_collect_lantern_glow(prototype)
+	prototype.free()
+
+func _emit_mesh_batch(node: Node, parent_transform: Transform3D, placements: Array, batch_name: String, cast_shadow: bool, bake_overrides: bool) -> void:
+	var local := parent_transform
+	if node is Node3D:
+		local = parent_transform * (node as Node3D).transform
+	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+		var mesh_node := node as MeshInstance3D
+		var batch := MultiMesh.new()
+		batch.transform_format = MultiMesh.TRANSFORM_3D
+		batch.mesh = _mesh_for_batch(mesh_node) if bake_overrides else mesh_node.mesh
+		batch.instance_count = placements.size()
+		for index in placements.size():
+			batch.set_instance_transform(index, placements[index] * local)
+		var visual := MultiMeshInstance3D.new()
+		visual.name = batch_name
+		visual.multimesh = batch
+		if not bake_overrides:
+			visual.material_override = mesh_node.material_override
+		visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if cast_shadow else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(visual)
+	for child in node.get_children():
+		_emit_mesh_batch(child, local, placements, batch_name, cast_shadow, bake_overrides)
+
+func _mesh_for_batch(mesh_node: MeshInstance3D) -> Mesh:
+	var copy := mesh_node.mesh.duplicate() as Mesh
+	for surface in copy.get_surface_count():
+		var override_mat := mesh_node.get_surface_override_material(surface)
+		if override_mat != null:
+			copy.surface_set_material(surface, override_mat)
+	return copy
 
 static func mark_character_rim(root: Node) -> void:
 	if root is GeometryInstance3D:
@@ -232,28 +274,28 @@ func _set_night_sky(environment: Environment, enabled: bool) -> void:
 	environment.background_mode = Environment.BG_SKY
 	environment.sky = night_sky
 
+var floor_batches: Dictionary = {}
+
 func place_arena_floor() -> void:
 	# Stable appearance across clients and scene reloads.
 	floor_rng.seed = 29417
-	var root := Node3D.new()
-	root.name = "ArenaFloor"
-	add_child(root)
+	floor_batches.clear()
 	var cache := {}
-	_floor_piece(root, cache, "arena_center", Vector3(0, ARENA_FLOOR_Y, 0), 0.0)
+	_floor_piece(cache, "arena_center", Vector3(0, ARENA_FLOOR_Y, 0), 0.0)
 	for index in 8:
 		var yaw := float(index) * TAU / 8.0
 		for piece in ["arena_inner_segment", "arena_middle_segment", "arena_outer_decor_segment", "arena_outer_plain_segment"]:
-			_floor_piece(root, cache, piece, Vector3(0, ARENA_FLOOR_Y, 0), yaw)
+			_floor_piece(cache, piece, Vector3(0, ARENA_FLOOR_Y, 0), yaw)
 	for index in 4:
 		var yaw := float(index) * TAU / 4.0
 		var radius := 5.05
-		_floor_piece(root, cache, "arena_separator", Vector3(0, ARENA_FLOOR_Y, 0), yaw)
-		_floor_piece(root, cache, "arena_anchor_tile", Vector3(cos(yaw) * radius, ARENA_FLOOR_Y + 0.02, -sin(yaw) * radius), 0.0)
-	_floor_piece(root, cache, "arena_transition_left", Vector3(6.7, ARENA_FLOOR_Y, 0), 0.0)
-	_floor_piece(root, cache, "arena_transition_right", Vector3(-6.7, ARENA_FLOOR_Y, 0), 0.0)
-	_floor_piece(root, cache, "arena_transition_left", Vector3(0, ARENA_FLOOR_Y, -6.7), PI * 0.5)
-	_floor_piece(root, cache, "arena_transition_right", Vector3(0, ARENA_FLOOR_Y, 6.7), PI * 0.5)
-	_floor_piece(root, cache, "arena_notch_ring", Vector3(0, ARENA_FLOOR_Y, 0), 0.0)
+		_floor_piece(cache, "arena_separator", Vector3(0, ARENA_FLOOR_Y, 0), yaw)
+		_floor_piece(cache, "arena_anchor_tile", Vector3(cos(yaw) * radius, ARENA_FLOOR_Y + 0.02, -sin(yaw) * radius), 0.0)
+	_floor_piece(cache, "arena_transition_left", Vector3(6.7, ARENA_FLOOR_Y, 0), 0.0)
+	_floor_piece(cache, "arena_transition_right", Vector3(-6.7, ARENA_FLOOR_Y, 0), 0.0)
+	_floor_piece(cache, "arena_transition_left", Vector3(0, ARENA_FLOOR_Y, -6.7), PI * 0.5)
+	_floor_piece(cache, "arena_transition_right", Vector3(0, ARENA_FLOOR_Y, 6.7), PI * 0.5)
+	_floor_piece(cache, "arena_notch_ring", Vector3(0, ARENA_FLOOR_Y, 0), 0.0)
 	var variants := ["floor_tile_A", "floor_tile_B", "floor_tile_C"]
 	for ix in range(-9, 10):
 		for iz in range(-9, 10):
@@ -261,24 +303,32 @@ func place_arena_floor() -> void:
 			var z := float(iz) + 0.5
 			if not _floor_tile_fits(x, z):
 				continue
-			_floor_piece(root, cache, variants[floor_rng.randi_range(0, 2)], Vector3(x, ARENA_FLOOR_Y, z), float(floor_rng.randi_range(0, 3)) * PI * 0.5)
+			_floor_piece(cache, variants[floor_rng.randi_range(0, 2)], Vector3(x, ARENA_FLOOR_Y, z), float(floor_rng.randi_range(0, 3)) * PI * 0.5)
+	_flush_floor_batches(cache)
 
-func _floor_piece(root: Node3D, cache: Dictionary, piece: String, at: Vector3, yaw: float) -> void:
+func _floor_piece(cache: Dictionary, piece: String, at: Vector3, yaw: float) -> void:
 	if not cache.has(piece):
 		var path := ARENA_FLOOR_DIR + piece + ".glb"
 		var loaded = load(path) if ResourceLoader.exists(path) else null
 		cache[piece] = loaded if loaded is PackedScene else null
 		if cache[piece] == null:
 			push_warning("演武场地面模块未导入: %s" % path)
-	var packed: PackedScene = cache[piece]
-	if packed == null:
+	if cache[piece] == null:
 		return
-	var node := packed.instantiate()
-	node.name = "%s_%d" % [piece, root.get_child_count()]
-	node.position = at
-	node.rotation.y = yaw
-	root.add_child(node)
-	_apply_floor_stone(node, floor_rng.randi_range(0, 23))
+	var variant := floor_rng.randi_range(0, 23)
+	var key := "%s#%d" % [piece, variant]
+	if not floor_batches.has(key):
+		floor_batches[key] = {"piece": piece, "variant": variant, "transforms": []}
+	floor_batches[key].transforms.append(Transform3D(Basis(Vector3.UP, yaw), at))
+
+func _flush_floor_batches(cache: Dictionary) -> void:
+	for key in floor_batches:
+		var row: Dictionary = floor_batches[key]
+		var packed: PackedScene = cache[row.piece]
+		var prototype := packed.instantiate()
+		_apply_floor_stone(prototype, int(row.variant))
+		_emit_mesh_batch(prototype, Transform3D.IDENTITY, row.transforms, str(row.piece), false, true)
+		prototype.free()
 
 func _apply_floor_stone(node: Node, variant: int) -> void:
 	# Imported GLBs embed the old texture: override only this arena's floor instances.

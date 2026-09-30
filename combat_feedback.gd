@@ -17,12 +17,6 @@ const SPARK_TEX = preload("res://assets/vfx/spark.png")
 const SOFT_TEX = preload("res://assets/vfx/soft.png")
 const RING_TEX = preload("res://assets/vfx/ring.png")
 const DUST_TEX = preload("res://assets/vfx/dust.png")
-const LIGHTNING_TEXTS: Array[Texture2D] = [
-	preload("res://assets/vfx/lightning_jagged.png"),
-	preload("res://assets/vfx/lightning_anime.png"),
-	preload("res://assets/vfx/lightning_thin.png"),
-	preload("res://assets/vfx/lightning_fork.png"),
-]
 const WIND_TEX = preload("res://assets/vfx/wind_streak.png")
 const FOX_UMBRELLA_VFX = preload("res://vfx/FoxUmbrellaSpiritVFX.tscn")
 const ADDITIVE = preload("res://vfx/additive_sprite.gdshader")
@@ -30,7 +24,6 @@ const ADDITIVE = preload("res://vfx/additive_sprite.gdshader")
 @onready var camera_rig: Node3D = get_node("../CameraRig")
 
 var ghost_wait := 0.0
-var blink_lightning_index := 0
 var dash_points: Array[Vector3] = []
 var dash_idle := 0.0
 var dash_ribbon: MeshInstance3D
@@ -300,37 +293,42 @@ func dash_start() -> void:
 	dash_points.clear()
 	dash_idle = 0.0
 
-func blink_effect(start: Vector3, finish: Vector3) -> void:
+func blink_effect(start: Vector3, finish: Vector3, source: Node3D = null) -> void:
 	play_sound(SWING_SOUND, -4.0)
+	if source != null and is_instance_valid(source):
+		_blink_afterimages(source, start, finish)
+
+func _blink_afterimages(source: Node3D, start: Vector3, finish: Vector3) -> void:
 	var travel := finish - start
-	var flat := Vector3(travel.x, 0.0, travel.z)
-	if flat.length_squared() < 0.0001:
-		flat = Vector3.FORWARD
-	var length := flat.length()
-	var mid := (start + finish) * 0.5 + Vector3.UP * 0.12
-	var streak := MeshInstance3D.new()
+	var origin := source.global_position
+	var departure := origin
+	if origin.distance_squared_to(finish) < origin.distance_squared_to(start):
+		departure = origin - travel
+	var marks: Array[float] = [0.2, 0.4, 0.6, 0.8]
+	for fraction in marks:
+		_blink_shade(departure + travel * fraction)
+
+func _blink_shade(at: Vector3) -> void:
+	var card := MeshInstance3D.new()
 	var quad := QuadMesh.new()
-	quad.orientation = QuadMesh.FACE_Y
-	quad.size = Vector2(maxf(length, 0.8), 1.15)
-	streak.mesh = quad
-	var bolt: Texture2D = LIGHTNING_TEXTS[blink_lightning_index]
-	blink_lightning_index = (blink_lightning_index + 1) % LIGHTNING_TEXTS.size()
-	var tint := Color(1.0, 1.0, 1.0, 1.0)
-	streak.material_override = _additive_material(bolt, tint, 2.4)
-	streak.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(streak)
-	var travel_dir := flat.normalized()
-	streak.global_transform = Transform3D(Basis(travel_dir, Vector3.UP, travel_dir.cross(Vector3.UP)), mid)
-	var mat := streak.material_override as ShaderMaterial
-	var tween := create_tween().set_parallel(true)
-	tween.tween_property(streak, "scale", Vector3(1.05, 1.35, 1.0), 0.16)
-	tween.tween_method(func(alpha: float) -> void:
-		mat.set_shader_parameter("tint", Color(tint.r, tint.g, tint.b, alpha))
-	, 1.0, 0.0, 0.18)
-	tween.chain().tween_callback(streak.queue_free)
-	for point in [start, finish]:
-		_billboard(point + Vector3.UP * 0.2, SOFT_TEX, 0.7, Color(0.7, 0.95, 1.0), 2.4, 0.16)
-		_dust(point + Vector3.UP * 0.05, 8, 0.7)
+	quad.size = Vector2(0.72, 1.45)
+	card.mesh = quad
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_FIXED_Y
+	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	mat.albedo_texture = SOFT_TEX
+	mat.albedo_color = Color(0.55, 0.92, 1.0, 0.55)
+	card.material_override = mat
+	card.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(card)
+	card.global_position = at + Vector3.UP * 0.05
+	var tween := create_tween()
+	tween.tween_property(mat, "albedo_color:a", 0.0, 0.35)
+	tween.tween_callback(card.queue_free)
 
 func dash_trail(at: Vector3) -> void:
 	dash_idle = 0.0
@@ -451,10 +449,10 @@ func _spin_forward(body: Node3D, forward: Vector3) -> Vector3:
 		return Vector3.FORWARD
 	return flat.normalized()
 
-func body_ghost(source: Node3D, tint := Color(0.62, 0.88, 1.0, 0.42)) -> void:
+func body_ghost(source: Node3D, tint := Color(0.62, 0.88, 1.0, 0.42), interval := 0.09, lifetime := 0.24) -> void:
 	if ghost_wait > 0.0 or source == null or not is_instance_valid(source):
 		return
-	ghost_wait = 0.09
+	ghost_wait = interval
 	var ghost := source.duplicate()
 	ghost.set_script(null)
 	ghost.name = "Afterimage"
@@ -477,9 +475,9 @@ func body_ghost(source: Node3D, tint := Color(0.62, 0.88, 1.0, 0.42)) -> void:
 			mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 			node.material_override = mat
 			node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			create_tween().tween_property(mat, "albedo_color:a", 0.0, 0.22)
+			create_tween().tween_property(mat, "albedo_color:a", 0.0, lifetime * 0.92)
 	var done := create_tween()
-	done.tween_interval(0.24)
+	done.tween_interval(lifetime)
 	done.tween_callback(ghost.queue_free)
 
 func effect_material(color: Color, transparent := false) -> StandardMaterial3D:

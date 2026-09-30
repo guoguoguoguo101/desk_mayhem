@@ -265,7 +265,7 @@ func _process(_delta: float) -> void:
 	# The dedicated test room uses fixed equipment, but always shows its aim reference.
 	var dedicated: bool = network != null and network.using_battle_server()
 	var mountain: bool = dedicated and str(network.get("battle_map_id")) == "mountain_courtyard"
-	instructions.text = "WASD 移动 · 1 甩鼠标/拉回 · 2 剪切闪/交换 · Q/E 雨伞 · F/C 锅 · Shift 闪现" if mountain else ("WASD 移动 · Shift 闪现 · 空格 跳跃 · Q 冲锋/挑飞 · E 旋伞 · F 回旋锅/召回 · C 扣锅 · 按住 Alt 显示鼠标" if dedicated else "WASD 移动 · Shift 闪现 · 空格 跳跃 · Tab 换槽 / 1–4 装备 · 按住 Alt 显示鼠标")
+	instructions.text = "WASD 移动 · 1 甩鼠标/回卷 · X 剪切闪/交换 · Q/E 雨伞 · F/C 锅 · Shift 闪现" if mountain else ("WASD 移动 · Shift 闪现 · 空格 跳跃 · Q 冲锋/挑飞 · E 旋伞 · F 回旋锅/召回 · C 扣锅 · 按住 Alt 显示鼠标" if dedicated else "WASD 移动 · Shift 闪现 · 空格 跳跃 · Tab 换槽 / 1–4 装备 · 按住 Alt 显示鼠标")
 	if dedicated:
 		crosshair.visible = network.phase == "play" and not player.downed
 	if mountain:
@@ -277,8 +277,14 @@ func _process(_delta: float) -> void:
 		var flying: bool = not state.get("mouse_projectile", {}).is_empty()
 		var one_left := maxf(0.0, float(int(state.get("mouse_cast_ready", 0))-now_ms)/1000.0)
 		var two_left := maxf(0.0, float(int(state.get("mouse_skill2_ready", 0))-now_ms)/1000.0)
-		skills.append(player.pack_slot("1", "拉回 %.1f" % (float(int(state.get("mouse_link_until", 0))-sim_tick)/60.0) if linked else ("飞行中" if flying else "甩鼠标"), 0.0 if linked or flying else one_left, BattleRules.MOUSE_CAST_CD, linked))
-		skills.append(player.pack_slot("2", "移形换影" if linked else "剪切闪", two_left, BattleRules.MOUSE_CUT_CD, linked))
+		var mouse_one_name := "飞行中" if flying else "甩鼠标"
+		if linked:
+			var target: Dictionary = session.replay.sim.entities.get(str(state.mouse_link_id), {})
+			var gap: Vector3 = target.get("position", state.position) - state.position
+			gap.y = 0.0
+			mouse_one_name = "回卷挑飞" if gap.length() <= BattleRules.MOUSE_PULL_LAUNCH_RANGE else ("靠近目标" if bool(state.get("mouse_tug_used", false)) else "拉近目标")
+		skills.append(player.pack_slot("1", mouse_one_name, 0.0 if linked or flying else one_left, BattleRules.MOUSE_CAST_CD, linked))
+		skills.append(player.pack_slot("X", "移形换影" if linked else "剪切闪", two_left, BattleRules.MOUSE_CUT_CD, linked))
 	for item in equip_ui:
 		item["panel"].visible = not dedicated
 	for i in skill_ui.size():
