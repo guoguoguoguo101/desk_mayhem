@@ -306,29 +306,9 @@ func _blink_afterimages(source: Node3D, start: Vector3, finish: Vector3) -> void
 		departure = origin - travel
 	var marks: Array[float] = [0.2, 0.4, 0.6, 0.8]
 	for fraction in marks:
-		_blink_shade(departure + travel * fraction)
-
-func _blink_shade(at: Vector3) -> void:
-	var card := MeshInstance3D.new()
-	var quad := QuadMesh.new()
-	quad.size = Vector2(0.72, 1.45)
-	card.mesh = quad
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.billboard_mode = BaseMaterial3D.BILLBOARD_FIXED_Y
-	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
-	mat.albedo_texture = SOFT_TEX
-	mat.albedo_color = Color(0.55, 0.92, 1.0, 0.55)
-	card.material_override = mat
-	card.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(card)
-	card.global_position = at + Vector3.UP * 0.05
-	var tween := create_tween()
-	tween.tween_property(mat, "albedo_color:a", 0.0, 0.35)
-	tween.tween_callback(card.queue_free)
+		var pose := source.global_transform
+		pose.origin = departure + travel * fraction
+		_spawn_body_ghost(source, pose, Color(0.42, 0.88, 1.0, 0.62), 0.35, false)
 
 func dash_trail(at: Vector3) -> void:
 	dash_idle = 0.0
@@ -453,12 +433,15 @@ func body_ghost(source: Node3D, tint := Color(0.62, 0.88, 1.0, 0.42), interval :
 	if ghost_wait > 0.0 or source == null or not is_instance_valid(source):
 		return
 	ghost_wait = interval
+	_spawn_body_ghost(source, source.global_transform, tint, lifetime, true)
+
+func _spawn_body_ghost(source: Node3D, pose: Transform3D, tint: Color, lifetime: float, additive: bool) -> void:
 	var ghost := source.duplicate()
 	ghost.set_script(null)
 	ghost.name = "Afterimage"
 	ghost.process_mode = Node.PROCESS_MODE_DISABLED
 	add_child(ghost)
-	ghost.global_transform = source.global_transform
+	ghost.global_transform = pose
 	for node in ghost.find_children("*", "", true, false):
 		node.process_mode = Node.PROCESS_MODE_DISABLED
 		if node is AnimationTree:
@@ -469,7 +452,7 @@ func body_ghost(source: Node3D, tint := Color(0.62, 0.88, 1.0, 0.42), interval :
 			var mat := StandardMaterial3D.new()
 			mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+			mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD if additive else BaseMaterial3D.BLEND_MODE_MIX
 			mat.albedo_color = tint
 			mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 			mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
