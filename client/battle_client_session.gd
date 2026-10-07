@@ -43,7 +43,6 @@ var npc_views: Dictionary = {}
 var pot_visuals: Dictionary = {}
 var pot_targets: Dictionary = {}
 var mouse_vfx: Node3D
-var mouse_ghost_tick: Dictionary = {}
 var mouse_cut_burst_paths: Dictionary = {}
 var mouse_cut_camera_key := ""
 var render_lives: Dictionary = {}
@@ -314,8 +313,6 @@ func _body(id: String) -> Node:
 	return manager.local_player if index==slot else manager.puppet_for(index+1)
 
 func _render(delta: float) -> void:
-	if is_instance_valid(mouse_vfx):
-		mouse_vfx.sync_world(replay.sim.entities, replay.sim.server_tick, delta)
 	var camera_rig := manager.get_parent().get_node_or_null("CameraRig")
 	if camera_rig != null and camera_rig.has_method("set_mouse_cut_focus"):
 		var local_state: Dictionary = replay.sim.entities.get(entity_id, {})
@@ -345,19 +342,10 @@ func _render(delta: float) -> void:
 			if fox_visual != null:
 				fox_visual.mouse_cut_pose = cutting
 			body.visual.rotation.x = -0.34 if cutting else 0.0
-		if is_instance_valid(mouse_vfx) and str(state.get("action", "")) == "mouse_cut":
-			var path: Array = state.get("mouse_cut_path", [])
-			var action_tick := int(state.get("action_tick", -1))
-			var ghost_state: Dictionary = mouse_ghost_tick.get(id, {})
-			var seen := int(ghost_state.get("segments", 0)) if int(ghost_state.get("action_tick", -2)) == action_tick else 0
-			if body.get("visual"):
-				for segment_index in range(seen, path.size()):
-					if segment_index % 2 != 1 or segment_index >= 9:
-						continue
-					var segment: Array = path[segment_index]
-					var end: Vector3 = segment[1]
-					mouse_vfx.spawn_cut_ghost(body.visual, end - body.global_position, end - segment[0], segment_index / 2)
-			mouse_ghost_tick[id] = {"action_tick":action_tick,"segments":path.size()}
+		if is_instance_valid(mouse_vfx) and body.get("visual"):
+			mouse_vfx.set_cut_source(str(id), body.visual)
+	if is_instance_valid(mouse_vfx):
+		mouse_vfx.sync_world(replay.sim.entities, replay.sim.server_tick, delta)
 	for id in pot_visuals:
 		var visual = pot_visuals[id]
 		visual.global_position = visual.global_position.lerp(pot_targets[id],1.0-exp(-35.0*delta))

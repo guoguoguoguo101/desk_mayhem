@@ -22,7 +22,23 @@
 | [图 3：起步尾气](docs/mouse_cut_references/03_start_exhaust.png) | 起点处弯曲的蓝金大弧线 |
 | [图 4：路径光条](docs/mouse_cut_references/04_speed_streaks.png) | 密集、细长、方向一致的蓝金速度条 |
 
-## 当前实现：主线程、Tick 与画面帧
+## 2026-09-30 实现更新
+
+2026-10-01 梭形 GPU 粒子版本（当前）：`mouse_cut_spindle.png` 替换旧彗星形光条贴图，两头尖、中间宽，真实透明背景。每段真实路径生成一次性 GPUParticles3D 批次，`mouse_cut_drop_process.gdshader` 控制大小、亮度、前下方速度、重力、独立寿命及单次轻反弹；`mouse_cut_drop_draw.gdshader` 让面片面向镜头、长轴沿投影速度，并采样贴图染成蓝金色。大光滴概率 18%，金色概率 22%，可反弹概率 25%；反弹恢复系数 0.28，水平速度保留 65%，竖直速度最多 1.6。触地后非反弹粒子立即消失；反弹粒子第二次触地也消失。每批射线读取出生点地面高度，预览无碰撞时按角色脚底高度回退；这是局部地面平面的视觉近似，不是全地形碰撞。路径纠偏、life 与死亡清理沿用统一管理。旧静态光条网格停用。
+
+新贴图使用内置 imagegen 生成，提示要求：单颗横向梭形能量光滴、左右两端尖、中间最宽、灰白亮核和柔光、实际透明背景、无彗星头尾及文字，供蓝金染色。
+
+2026-10-01 贴图版本：生成并接入透明雨滴能量贴图 `assets/vfx/mouse_cut_raindrop.png`，保留原始 alpha。路径光条现在由合并网格承载贴图，Shader 染色并控制透明度；不是 GPU 光条粒子。大光滴约占 22%，其余为长短粗细不一的小光滴；下倾角和横向散开独立随机，形成方向一致但凌乱的分布。起点高密、后段低疏的编排继续保留。
+
+2026-10-01 光条调整：路径直线光条使用独立的雨滴轮廓 Shader 分支，具有较宽的亮头、渐细尾巴及柔光边；每段数量按自身进度从约 30 条递减至 2 条，最后一段不再补充。网格宽度方向以竖直方向为主，避免常用侧视镜头把水平条带看成丝线。弧形尾气、残影拖尾沿用细带分支，不受此次加宽影响。
+
+客户端穿行视觉已统一到 `MouseSkillVFX._sync_cut_track()`，实战与两份预览仅注册狐狸视觉源，复用同一条生命周期。三只能量狐狸在路径索引 1、3、5 生成，使用蓝色主体、青白轮廓与消散亮边，初始透明度为 0.9、0.6、0.35，并附带渐细拖尾。起步弧线与蓝金长光条使用合并程序网格；光条按各段自己的进度从密到疏。蓝色方块延迟、分批启动，金色方块在尾声点缀。旧竖直 Ribbon 已移除，保留较淡的水平底光。
+
+路径保存深复制副本，逐段比较坐标；同段数坐标变化和路径缩短都会清理旧视觉并重建。动作 Tick 与 life 区分施放，死亡和实体移除清理视觉。跳帧补段会回补残影年龄，避免全部同时出生。光路在路径停止增长后按自己的寿命淡出，不等待整个技能恢复结束。两份预览使用统一时间倍率覆盖位移、Shader、残影及 GPU 粒子。
+
+已运行 `tools/test_cut_travel_vfx.gd` 验证跳帧补齐、同段数纠偏、路径缩短、换 life 和死亡清理；两份预览通过运行检查。`tools/cut_vfx_review.gd` 可输出原速穿行结束附近的实际渲染图。美术仍需实战镜头下评估，模型表面消散与碎片出生位置尚未做到逐点对应；透明绘制成本尚未用性能分析器验收。
+
+## 改动前实现：主线程、Tick 与画面帧
 
 客户端的 `_physics_process()` 和 `_process()` 是 Godot 以不同节奏调用的脚本回调，并非两个由项目创建的并行线程。前者按固定物理频率推进预测世界，后者每个画面帧更新显示节点。网格、材质、粒子配置由脚本提交，实际像素由渲染系统绘制。
 
@@ -98,14 +114,14 @@ MouseSkillVFX
 ```gdscript
 func sync_cut_travel(state: Dictionary, delta: float) -> void:
     var path: Array = state.get("mouse_cut_path", [])
-    var progress := float(path.size()) / 9.0
-    reconcile_action_and_path(state, path)      # 新动作或纠偏时重置视觉
-    for segment_index in range(seen_segments, path.size()):
+	reconcile_action_and_path(state, path)      # 新动作或纠偏时重置视觉
+	for segment_index in range(seen_segments, path.size()):
+		var progress := float(segment_index + 1) / 9.0
         append_path_ribbon(path, segment_index)
         append_speed_streaks(path, segment_index, progress)
         maybe_spawn_ghost(path, segment_index)
         maybe_start_square_particles(path, segment_index)
-    update_shader_time_and_fades(delta, progress)
+	update_shader_time_and_fades(delta, float(path.size()) / 9.0)
 ```
 
 这是**设计伪代码**，不是现有函数。`progress` 用于决定生成阶段；每个已经生成的视觉组另有自己的 `age` 和寿命。分层之后，后半程的方块粒子无需加入 `bursts`，残影和光条也不必按每个碎片创建独立 Node。

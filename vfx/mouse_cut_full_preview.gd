@@ -50,22 +50,23 @@ func _process(delta: float) -> void:
 	var travel_progress := clampf((elapsed - TRAVEL_START) / (TRAVEL_END - TRAVEL_START), 0.0, 1.0)
 	actor.global_position = START.lerp(END, travel_progress)
 	actor.rotation.x = -0.34 if elapsed >= TRAVEL_START and elapsed < TRAVEL_END else 0.0
+	fox_visual.mouse_cut_pose = elapsed >= TRAVEL_START and elapsed < TRAVEL_END
 	var required := mini(BattleRules.MOUSE_CUT_TRAVEL_TICKS, int(floor(travel_progress * BattleRules.MOUSE_CUT_TRAVEL_TICKS)))
 	while path.size() < required:
 		var index := path.size()
 		var from := START.lerp(END, float(index) / BattleRules.MOUSE_CUT_TRAVEL_TICKS)
 		var to := START.lerp(END, float(index + 1) / BattleRules.MOUSE_CUT_TRAVEL_TICKS)
 		path.append([from, to])
-		if index % 2 == 1:
-			effect.spawn_cut_ghost(actor, to - actor.global_position, to - from, index / 2)
 	state.position = actor.global_position
 	state.mouse_cut_path = path
 	state.action = "mouse_cut" if elapsed < ACTION_END else ""
-	effect.sync_world({"preview_fox":state}, action_tick + path.size(), delta)
+	effect.set_cut_source("preview_fox", actor)
+	state.mouse_cut_end = actor.global_position
+	effect.sync_world({"preview_fox":state}, action_tick + int(elapsed / TICK), delta)
 	if elapsed >= BURST_AT and not burst_played:
 		burst_played = true
 		# The stage puts the fox's body origin at 0.95 m; the burst is grounded.
-		effect.burst_cut(Vector3(START.x, 0.0, START.z), Vector3(END.x, 0.0, END.z))
+		effect.burst_cut(START, END)
 	_animate_dummy()
 	_update_camera(delta)
 	if auto_loop and elapsed >= RESET_AT:
@@ -81,7 +82,7 @@ func _replay() -> void:
 	dummy.global_position = Vector3.ZERO
 	dummy_visual.rotation = Vector3.ZERO
 	dummy_visual.scale = Vector3.ONE
-	state = {"kind":"player", "position":START, "action":"mouse_cut", "action_tick":action_tick, "mouse_cut_path":path}
+	state = {"kind":"player", "position":START, "action":"mouse_cut", "action_tick":action_tick, "mouse_cut_path":path,"mouse_cut_start":START,"mouse_cut_end":START}
 	_set_animation(&"UmbrellaDash")
 	_update_label()
 
@@ -109,6 +110,12 @@ func _set_speed(value: float) -> void:
 	_update_label()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			camera.fov = maxf(15.0, camera.fov / 1.12)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			camera.fov = minf(90.0, camera.fov * 1.12)
+		return
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
 	match event.physical_keycode:
@@ -156,7 +163,7 @@ func _update_label() -> void:
 	if not is_instance_valid(instructions):
 		return
 	var mode := "原速" if speed_scale >= 0.99 else "%.2f×" % speed_scale
-	instructions.text = "X 完整技能｜%s%s｜Q 结束并保存录像｜E/空格 重播 P 暂停｜1 原速 2 0.35× 3 0.2× 4 0.1×｜C 镜头 H 隐藏文字 L 循环｜A/D/W/S 调视角" % [mode, "（已暂停）" if paused else ""]
+	instructions.text = "X 完整技能｜%s%s｜Q 结束并保存录像｜E/空格 重播 P 暂停｜1 原速 2 0.35× 3 0.2× 4 0.1×｜C 镜头 H 隐藏文字 L 循环｜滚轮 缩放｜A/D/W/S 调视角" % [mode, "（已暂停）" if paused else ""]
 
 func _build_dummy() -> void:
 	_add_mesh(CylinderMesh.new(), Vector3(0.0, 0.87, 0.0), Vector3(0.11, 0.9, 0.11), Color(0.3, 0.2, 0.13))

@@ -33,31 +33,33 @@ func _process(delta: float) -> void:
 	elapsed += delta
 	var finish_now := false
 	if running:
-		var duration := TRAVEL_SECONDS / speed_scale
+		var duration := TRAVEL_SECONDS
 		var progress := minf(elapsed / duration, 1.0)
 		var required := mini(TRAVEL_SEGMENTS, int(floor(progress * TRAVEL_SEGMENTS)))
 		actor.global_position = START.lerp(END, progress)
+		fox_visual.mouse_cut_pose = true
 		while path.size() < required:
 			var index := path.size()
 			var from := START.lerp(END, float(index) / TRAVEL_SEGMENTS)
 			var to := START.lerp(END, float(index + 1) / TRAVEL_SEGMENTS)
 			path.append([from, to])
-			if index % 2 == 1:
-				effect.spawn_cut_ghost(actor, to - actor.global_position, to - from, index / 2)
 		state.position = actor.global_position
 		state.mouse_cut_path = path
 		if progress >= 1.0:
 			finish_now = true
-	elif elapsed >= TRAVEL_SECONDS / speed_scale + repeat_delay:
+	elif elapsed >= TRAVEL_SECONDS + repeat_delay:
 		_replay()
+	effect.set_cut_source("preview_fox", actor)
 	effect.sync_world({"preview_fox":state}, action_tick + path.size(), delta)
 	if finish_now:
 		running = false
 		state.action = ""
 		actor.rotation.x = 0.0
+		fox_visual.mouse_cut_pose = false
 		_set_animation(&"Idle")
 
 func _replay() -> void:
+	Engine.time_scale = speed_scale
 	action_tick += 100
 	elapsed = 0.0
 	path = []
@@ -74,6 +76,12 @@ func _set_animation(name: StringName) -> void:
 		playback.travel(name)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			camera.fov = maxf(15.0, camera.fov / 1.12)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			camera.fov = minf(90.0, camera.fov * 1.12)
+		return
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
 	match event.physical_keycode:
@@ -84,6 +92,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_replay()
 		KEY_P:
 			paused = not paused
+			Engine.time_scale = 0.0 if paused else speed_scale
 			_update_label()
 		KEY_1:
 			speed_scale = 1.0
@@ -116,4 +125,7 @@ func _update_camera() -> void:
 
 func _update_label() -> void:
 	var mode := "原速" if speed_scale >= 0.99 else "慢放 %.2fx" % speed_scale
-	instructions.text = "X 穿梭预览｜循环播放｜%s%s｜Q 结束并保存录像｜E/空格 重播｜P 暂停｜1 原速 2 0.35× 3 0.2× 4 0.1×｜A/D 转视角｜W/S 调高低" % [mode, "（已暂停）" if paused else ""]
+	instructions.text = "X 穿梭预览｜循环播放｜%s%s｜Q 结束并保存录像｜E/空格 重播｜P 暂停｜1 原速 2 0.35× 3 0.2× 4 0.1×｜滚轮 缩放｜A/D 转视角｜W/S 调高低" % [mode, "（已暂停）" if paused else ""]
+
+func _exit_tree() -> void:
+	Engine.time_scale = 1.0

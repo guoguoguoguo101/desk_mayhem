@@ -14,8 +14,9 @@ void fragment() {
 	if (block < threshold || original.a < 0.08) discard;
 	float rim = pow(1.0 - max(dot(normalize(NORMAL), normalize(VIEW)), 0.0), 2.2);
 	float edge = 1.0 - smoothstep(0.0, 0.22, block - threshold);
-	vec3 body = mix(vec3(0.08, 0.22, 0.58), original.rgb * vec3(0.22, 0.72, 1.1), 0.43);
-	ALBEDO = body + vec3(0.22, 0.72, 1.0) * rim * 1.3 + vec3(0.42, 0.9, 1.0) * edge * 0.42;
-	EMISSION = vec3(0.05, 0.36, 1.0) * (rim * 2.4 + edge * 0.55);
+	float detail = dot(original.rgb, vec3(0.2126, 0.7152, 0.0722));
+	vec3 body = mix(vec3(0.025, 0.075, 0.3), vec3(0.08, 0.36, 0.9), detail);
+	ALBEDO = body + vec3(0.22, 0.75, 1.0) * rim * 1.7;
+	EMISSION = vec3(0.12, 0.58, 1.0) * (0.55 + detail * 0.45 + rim * 3.5) + vec3(0.4, 0.88, 1.0) * edge * 1.2;
 	ALPHA = opacity * original.a * (0.73 + rim * 0.27);
 }
