@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "com.firstgeargames.fishnet": "https://github.com/FirstGearGames/FishNet.git?path=Assets/FishNet#6e7ee695e9d4ce56b0d1f115a0eeec118d5bb4e2",
+    "com.unity.sdk.linux-arm64": "1.1.0",
+    "com.unity.sdk.linux-x86_64": "1.1.0",
+    "com.unity.toolchain.win-x86_64-linux": "1.1.0",
+    "com.unity.ugui": "1.0.0"
+  }
+}

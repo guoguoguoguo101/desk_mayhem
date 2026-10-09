@@ -10,3 +10,8 @@ _network_test.gd.uid
 _run_network_test.py
 test_output/
 _socket_probe.py
+
+# Generated test logs and Python bytecode
+net_test_*.txt
+__pycache__/
+*.pyc

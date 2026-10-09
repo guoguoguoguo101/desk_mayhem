@@ -4,6 +4,8 @@
 
 独立战斗服的同步见 [NETWORK_ARCHITECTURE.md](NETWORK_ARCHITECTURE.md)，启动和回归见 [BATTLE_TESTING.md](BATTLE_TESTING.md)。
 
+Unity 迁移第一阶段正在 `unity/` 新工程中实现：仅山门演武场占位地图、两名玩家、移动与旋伞一个代表性技能、FishNet 传输和共享 C# 预测／权威仿真。共享仿真已通过独立 C# 验证；Unity 编辑器导入、Windows 客户端与 Linux 专用服构建均成功，本机两客户端已验证入场、快照、输入与服务器旋伞扣血。Linux 主机运行和公网延迟测试尚待完成。Godot 原工程和 UDP 战斗服未改动。
+
 ## 一句话介绍
 
 Godot 4 的第三人称 3D 乱斗原型：玩家控制一只卡通狐狸，可在办公室单人练习，用局域网 ENet 进入 1v1 中式庭院，或加入独立 UDP 战斗服（原庭院 / 山门演武场）。当前重点是拳脚、办公室道具、浮空连招与击飞手感，尚无完整对局目标。

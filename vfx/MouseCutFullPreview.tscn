@@ -1,16 +1,16 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene format=3 uid="uid://dpdk0kd8jl7pr"]
 
-[ext_resource type="Script" path="res://vfx/mouse_cut_full_preview.gd" id="1_preview"]
-[ext_resource type="Script" path="res://vfx/mouse_skill_vfx.gd" id="2_effect"]
+[ext_resource type="Script" uid="uid://dgwyjtqhyial3" path="res://vfx/mouse_cut_full_preview.gd" id="1_preview"]
+[ext_resource type="Script" uid="uid://dcamkry2ymggf" path="res://vfx/mouse_skill_vfx.gd" id="2_effect"]
 [ext_resource type="PackedScene" path="res://assets/characters/fox_visual.tscn" id="3_fox"]
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_floor"]
-size = Vector2(20, 11)
 
 [sub_resource type="StandardMaterial3D" id="Material_floor"]
 albedo_color = Color(0.075, 0.085, 0.11, 1)
 metallic = 0.12
 roughness = 0.58
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_floor"]
+size = Vector2(20, 11)
 
 [sub_resource type="Environment" id="Environment_preview"]
 background_mode = 1
@@ -21,42 +21,42 @@ ambient_light_energy = 0.55
 glow_enabled = true
 glow_intensity = 0.7
 
-[node name="MouseCutFullPreview" type="Node3D"]
+[node name="MouseCutFullPreview" type="Node3D" unique_id=1461751586]
 script = ExtResource("1_preview")
 metadata/movie_file = "res://recordings/mouse_cut_full_preview.avi"
 
-[node name="Floor" type="MeshInstance3D" parent="."]
-mesh = SubResource("PlaneMesh_floor")
+[node name="Floor" type="MeshInstance3D" parent="." unique_id=786947598]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0028808117, -0.011000156, 0.005273342)
 material_override = SubResource("Material_floor")
+mesh = SubResource("PlaneMesh_floor")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1519867635]
 environment = SubResource("Environment_preview")
 
-[node name="Actor" type="Node3D" parent="."]
-position = Vector3(-4, 0.95, 0)
-rotation = Vector3(0, -1.570796, 0)
+[node name="Actor" type="Node3D" parent="." unique_id=601324334]
+transform = Transform3D(3.1391647e-07, 0, -1, 0, 1, 0, 1, 0, 3.1391647e-07, -4, 0.95, 0)
 
-[node name="FoxVisual" parent="Actor" instance=ExtResource("3_fox")]
+[node name="FoxVisual" parent="Actor" unique_id=943268592 instance=ExtResource("3_fox")]
 
-[node name="StrawDummy" type="Node3D" parent="."]
+[node name="StrawDummy" type="Node3D" parent="." unique_id=1969332108]
 
-[node name="DummyVisual" type="Node3D" parent="StrawDummy"]
+[node name="DummyVisual" type="Node3D" parent="StrawDummy" unique_id=460057473]
 
-[node name="MouseSkillVFX" type="Node3D" parent="."]
+[node name="MouseSkillVFX" type="Node3D" parent="." unique_id=674822851]
 script = ExtResource("2_effect")
 
-[node name="Camera3D" type="Camera3D" parent="."]
-position = Vector3(0, 3.0, 8.5)
-fov = 55.0
+[node name="Camera3D" type="Camera3D" parent="." unique_id=141358611]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 8.5)
 current = true
+fov = 55.0
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
-rotation = Vector3(-0.85, -0.5, 0)
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=252689354]
+transform = Transform3D(0.87758255, 0.36018303, -0.31641275, 0, 0.6599831, 0.7512804, 0.47942555, -0.6593106, 0.57918966, 0, 0, 0)
 light_energy = 1.45
 
-[node name="CanvasLayer" type="CanvasLayer" parent="."]
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1220438219]
 
-[node name="Instructions" type="Label" parent="CanvasLayer"]
+[node name="Instructions" type="Label" parent="CanvasLayer" unique_id=1615765017]
 offset_left = 20.0
 offset_top = 20.0
 offset_right = 1300.0
